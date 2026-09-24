@@ -1,0 +1,393 @@
+  :root{
+    color-scheme: only light;
+    --bg:#F1F4EC;
+    --ink:#0E1B14;
+    --ink-soft:#33453A;
+    --card:#FFFFFF;
+    --line:#DDE3D6;
+    --protein:#B24630;
+    --protein-bg:#F7E7E2;
+    --veg:#4C7A3D;
+    --veg-bg:#E9F0E2;
+    --fat:#B8722A;
+    --fat-bg:#F5E7D6;
+    --salt:#4A6D8C;
+    --salt-bg:#E4EBF0;
+    --fiber:#3F8272;
+    --fiber-bg:#E2EEEA;
+    --carbs:#A98A2B;
+    --carbs-bg:#F2EAD4;
+    --calories:#8C5A82;
+    --calories-bg:#EFE3EC;
+    --radius:20px;
+  }
+  *{box-sizing:border-box;}
+  html{color-scheme: only light; background:transparent;}
+  html,body{margin:0;padding:0;background:transparent;}
+  body{
+    font-family:'Zen Kaku Gothic New', sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .app{
+    max-width:520px;
+    margin:0 auto;
+    background:var(--bg);
+    color:var(--ink);
+    min-height:100vh;
+    padding:calc(env(safe-area-inset-top) + 28px) 18px calc(env(safe-area-inset-bottom) + 40px);
+  }
+
+  .hero{margin-bottom:26px;}
+  .hero h1{
+    font-family:'Shippori Mincho', serif;
+    font-weight:800;
+    font-size:30px;
+    line-height:1.35;
+    margin:0 0 10px;
+    letter-spacing:.02em;
+    color:var(--ink);
+  }
+  .hero p{
+    margin:0;
+    font-size:14.5px;
+    line-height:1.7;
+    color:var(--ink-soft);
+    font-weight:500;
+  }
+  .hero .goal-line{
+    display:inline-flex;
+    gap:10px;
+    margin-top:10px;
+    flex-wrap:wrap;
+  }
+  .goal-chip{
+    font-size:13px;
+    padding:5px 12px;
+    border-radius:100px;
+    border:1px solid var(--line);
+    background:var(--card);
+    color:var(--ink-soft);
+  }
+
+  .view-tabs{
+    display:flex;
+    gap:8px;
+    margin-bottom:18px;
+    border-bottom:1px solid var(--line);
+  }
+  .view-tab{
+    flex:1;
+    padding:10px 0 12px;
+    border:none;
+    background:transparent;
+    font-family:inherit;
+    font-size:14.5px;
+    font-weight:700;
+    color:var(--ink-soft);
+    cursor:pointer;
+    border-bottom:2px solid transparent;
+    margin-bottom:-1px;
+    position:relative;
+  }
+  .view-tab.active{
+    color:var(--ink);
+    border-bottom-color:var(--veg);
+  }
+  .saved-count{
+    display:inline-block;
+    margin-left:6px;
+    font-size:11.5px;
+    font-weight:700;
+    color:#fff;
+    background:var(--protein);
+    border-radius:100px;
+    padding:1px 7px;
+    vertical-align:middle;
+  }
+
+  .saved-empty{
+    text-align:center;
+    padding:40px 16px;
+    color:var(--ink-soft);
+    font-size:14px;
+    line-height:1.8;
+  }
+  .saved-card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:18px 20px;
+    margin-bottom:14px;
+  }
+  .saved-card-head{
+    display:flex;
+    align-items:baseline;
+    gap:8px;
+    flex-wrap:wrap;
+    margin-bottom:4px;
+  }
+  .saved-card-head h2{
+    font-family:'Shippori Mincho', serif;
+    font-size:19px;
+    margin:0;
+    flex:1;
+    min-width:0;
+  }
+  .saved-macro{
+    font-size:12.5px;
+    color:var(--ink-soft);
+    margin:0 0 14px;
+  }
+  .save-btn{
+    display:inline-flex;
+    align-items:center;
+    gap:5px;
+    margin:2px 0 16px;
+    padding:8px 16px;
+    border-radius:100px;
+    border:1px solid var(--protein);
+    background:var(--protein-bg);
+    color:var(--protein);
+    font-family:inherit;
+    font-size:13px;
+    font-weight:700;
+    cursor:pointer;
+  }
+  .save-btn.saved{
+    background:var(--protein);
+    color:#fff;
+  }
+  .remove-saved-btn{
+    padding:7px 14px;
+    border-radius:100px;
+    border:1px solid var(--line);
+    background:var(--bg);
+    color:var(--ink-soft);
+    font-family:inherit;
+    font-size:12.5px;
+    cursor:pointer;
+  }
+
+  .ingredient-input{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:16px 18px;
+    margin-bottom:20px;
+  }
+  .ingredient-input label{
+    display:block;
+    font-size:13.5px;
+    font-weight:700;
+    margin-bottom:8px;
+    color:var(--ink);
+  }
+  .ingredient-input input{
+    width:100%;
+    font-family:inherit;
+    font-size:15px;
+    padding:11px 14px;
+    border-radius:100px;
+    border:1px solid var(--line);
+    background:var(--bg);
+    color:var(--ink);
+    outline:none;
+  }
+  .ingredient-input input:focus{
+    border-color:var(--veg);
+  }
+  .ingredient-input select{
+    width:100%;
+    font-family:inherit;
+    font-size:15px;
+    padding:11px 14px;
+    border-radius:100px;
+    border:1px solid var(--line);
+    background:var(--bg);
+    color:var(--ink);
+    outline:none;
+  }
+  .input-hint{
+    font-size:12px;
+    color:var(--ink-soft);
+    margin:8px 0 0;
+    line-height:1.6;
+  }
+
+  .exclude-block{margin-top:14px;}
+
+  .option-row{
+    display:flex;
+    gap:16px;
+    margin-top:14px;
+    flex-wrap:wrap;
+  }
+  .option-group{flex:1; min-width:130px;}
+  .option-label{
+    display:block;
+    font-size:12.5px;
+    font-weight:700;
+    color:var(--ink);
+    margin-bottom:6px;
+  }
+  .count-toggle{display:flex; gap:6px;}
+  .count-btn, .toggle-btn{
+    flex:1;
+    padding:9px 0;
+    border-radius:100px;
+    border:1px solid var(--line);
+    background:var(--bg);
+    color:var(--ink-soft);
+    font-family:inherit;
+    font-size:13px;
+    font-weight:700;
+    cursor:pointer;
+  }
+  .count-btn.active, .toggle-btn.active{
+    background:var(--veg);
+    border-color:var(--veg);
+    color:#fff;
+  }
+  .metric-toggle-block{margin-top:14px;}
+  .metric-toggle-row{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    margin-top:8px;
+  }
+  .metric-toggle-btn{
+    padding:8px 14px;
+    border-radius:100px;
+    border:1px solid var(--line);
+    background:var(--bg);
+    color:var(--ink-soft);
+    font-family:inherit;
+    font-size:12.5px;
+    font-weight:700;
+    cursor:pointer;
+  }
+  .metric-toggle-btn.active{
+    background:var(--veg);
+    border-color:var(--veg);
+    color:#fff;
+  }
+  .target-row .option-group{min-width:90px;}
+  .target-row input[type="number"]{
+    text-align:center;
+    padding:11px 8px;
+    -moz-appearance:textfield;
+    appearance:textfield;
+  }
+  .target-row input::-webkit-outer-spin-button,
+  .target-row input::-webkit-inner-spin-button{
+    -webkit-appearance:none;
+    margin:0;
+  }
+
+  .result{margin-top:6px;}
+  .recipe-card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:22px 20px 24px;
+    animation:rise .35s ease;
+  }
+  @keyframes rise{
+    from{opacity:0; transform:translateY(10px);}
+    to{opacity:1; transform:translateY(0);}
+  }
+  .recipe-tag{
+    font-size:12.5px;
+    color:var(--ink-soft);
+    margin:0 0 6px;
+  }
+  .recipe-card h2{
+    font-family:'Shippori Mincho', serif;
+    font-size:22px;
+    line-height:1.4;
+    margin:0 0 14px;
+  }
+  .badges{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;}
+  .badge{
+    font-size:13px;
+    font-weight:700;
+    padding:6px 12px;
+    border-radius:100px;
+  }
+  .badge.protein{background:var(--protein-bg); color:var(--protein);}
+  .badge.veg{background:var(--veg-bg); color:var(--veg);}
+  .badge.fat{background:var(--fat-bg); color:var(--fat);}
+  .badge.salt{background:var(--salt-bg); color:var(--salt);}
+  .badge.fiber{background:var(--fiber-bg); color:var(--fiber);}
+  .badge.carbs{background:var(--carbs-bg); color:var(--carbs);}
+  .badge.calories{background:var(--calories-bg); color:var(--calories);}
+
+  .recipe-card h3{
+    font-size:14px;
+    margin:0 0 8px;
+    color:var(--ink);
+    font-weight:700;
+  }
+  .ingredients{margin-bottom:18px;}
+  .ingredients ul{
+    margin:0; padding:0;
+    list-style:none;
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:6px 14px;
+  }
+  .ingredients li{
+    font-size:13.5px;
+    color:var(--ink-soft);
+    border-bottom:1px dashed var(--line);
+    padding-bottom:5px;
+  }
+  .steps{margin-bottom:20px;}
+  .steps ol{margin:0; padding-left:20px;}
+  .steps li{
+    font-size:14px;
+    line-height:1.75;
+    margin-bottom:6px;
+    color:var(--ink);
+  }
+  .dish-block{margin-bottom:22px; padding-top:18px; border-top:1px dashed var(--line);}
+  .dish-block:first-child{margin-top:0; padding-top:0; border-top:none;}
+  .dish-head{display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:4px;}
+  .dish-head h2{margin:0;}
+  .dish-type-tag{
+    font-size:11.5px;
+    font-weight:700;
+    padding:3px 10px;
+    border-radius:100px;
+    background:var(--protein-bg);
+    color:var(--protein);
+    white-space:nowrap;
+  }
+  .dish-macro{
+    font-size:12.5px;
+    color:var(--ink-soft);
+    margin:0 0 14px;
+  }
+  .reroll{
+    width:100%;
+    padding:13px;
+    border-radius:100px;
+    border:1px solid var(--line);
+    background:var(--bg);
+    color:var(--ink);
+    font-family:inherit;
+    font-size:14px;
+    font-weight:700;
+    cursor:pointer;
+  }
+  .reroll:active{opacity:.7;}
+
+  .note{
+    text-align:center;
+    font-size:12px;
+    color:var(--ink-soft);
+    margin-top:22px;
+    line-height:1.6;
+  }
+
+  [hidden]{display:none !important;}
