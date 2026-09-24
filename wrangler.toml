@@ -1,0 +1,15 @@
+name = "recipe-app"
+compatibility_date = "2024-09-23"
+pages_build_output_dir = "."
+
+# D1データベース (wrangler d1 create recipe-app-db で作成後、database_id を書き換える)
+[[d1_databases]]
+binding = "DB"
+database_name = "recipe-app-db"
+database_id = "ここにwrangler d1 createで発行されたIDを貼る"
+
+# WebAuthnのRP(Relying Party)設定。本番ドメインに合わせて変更する
+[vars]
+RP_ID = "your-app.pages.dev"
+RP_NAME = "今日のレシピ回し"
+ORIGIN = "https://your-app.pages.dev"

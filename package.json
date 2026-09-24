@@ -1,0 +1,14 @@
+{
+  "name": "recipe-app-auth",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler pages dev . --d1=DB",
+    "deploy": "wrangler pages deploy ."
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^13.3.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}
