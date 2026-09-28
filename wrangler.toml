@@ -6,7 +6,7 @@ pages_build_output_dir = "."
 [[d1_databases]]
 binding = "DB"
 database_name = "recipe-app-db"
-database_id = "ここにwrangler d1 createで発行されたIDを貼る"
+database_id = "4ece8d15-f763-4080-b369-abfd4d11b329"
 
 # WebAuthnのRP(Relying Party)設定。本番ドメインに合わせて変更する
 [vars]
