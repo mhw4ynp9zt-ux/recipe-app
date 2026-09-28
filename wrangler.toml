@@ -10,6 +10,6 @@ database_id = "4ece8d15-f763-4080-b369-abfd4d11b329"
 
 # WebAuthnのRP(Relying Party)設定。本番ドメインに合わせて変更する
 [vars]
-RP_ID = "your-app.pages.dev"
+RP_ID = "recipe-app-8v0.pages.dev/"
 RP_NAME = "今日のレシピ回し"
-ORIGIN = "https://your-app.pages.dev"
+ORIGIN = "https://recipe-app-8v0.pages.dev/"
