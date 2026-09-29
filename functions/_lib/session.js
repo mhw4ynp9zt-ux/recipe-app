@@ -118,6 +118,37 @@ function json(data, init = {}) {
   return new Response(JSON.stringify(data), { ...init, headers });
 }
 
+// ==== 管理者判定・リクエスト検証 ====
+
+// 管理者は環境変数 ADMIN_USER_ID に指定したユーザーIDの1人だけ。
+// 未設定なら誰も管理者にならない(安全側に倒す)。
+function isAdminUser(env, user) {
+  return !!user && !!env.ADMIN_USER_ID && user.id === env.ADMIN_USER_ID;
+}
+
+// 画面に返してよいユーザー情報(内部のユーザー名などは返さない)
+function publicUser(env, user) {
+  return { id: user.id, isAdmin: isAdminUser(env, user) };
+}
+
+// 他のサイトからのPOST/PUTを弾く(Originヘッダーが付いている場合だけ確認する)
+function checkOrigin(request, env) {
+  const origin = request.headers.get("Origin");
+  if (!origin) return true;
+  return origin === env.ORIGIN;
+}
+
+// 管理者専用APIの入口で使う。成功なら { user }、失敗なら { error: Response } を返す。
+async function requireAdmin(env, request) {
+  const user = await getSessionUser(env, request);
+  if (!user) return { error: json({ error: "ログインが必要です" }, { status: 401 }) };
+  if (!isAdminUser(env, user)) return { error: json({ error: "権限がありません" }, { status: 403 }) };
+  if (request.method !== "GET" && !checkOrigin(request, env)) {
+    return { error: json({ error: "不正なリクエストです" }, { status: 403 }) };
+  }
+  return { user };
+}
+
 export {
   createChallenge,
   consumeChallenge,
@@ -126,4 +157,8 @@ export {
   getSessionUser,
   destroySession,
   json,
+  isAdminUser,
+  publicUser,
+  checkOrigin,
+  requireAdmin,
 };
