@@ -272,9 +272,18 @@
     });
   });
 
-  function renderCreatedCombo(dishes){
-    // このバッチで実際に値が入っている指標だけをバッジ・表示対象にする(選択しなかった指標は表示しない)
-    const shown = NUTRIENT_METRICS.filter(m => dishes.some(d => d[m.id] != null));
+  // 指標ごとの桁数で数値を丸めて表示用の文字列にする(塩分・食物繊維は0.1g単位)
+  function formatMetric(m, value){
+    const decimals = m.decimals || 0;
+    const p = Math.pow(10, decimals);
+    return (Math.round(value * p) / p).toFixed(decimals);
+  }
+
+  function renderCreatedCombo(dishes, activeMetrics){
+    // 検索条件で選んだ指標はすべて、すべての品に表示する(値はサーバーが成分表から計算済み)
+    const shown = activeMetrics && activeMetrics.length
+      ? activeMetrics
+      : NUTRIENT_METRICS.filter(m => dishes.some(d => d[m.id] != null));
     createResultEl.hidden = false;
     createResultEl.innerHTML = `
       <div class="recipe-card">
@@ -282,7 +291,7 @@
         <div class="badges">
           ${shown.map(m => {
             const total = dishes.reduce((s, d) => s + (d[m.id] || 0), 0);
-            return `<span class="badge ${m.id}">${m.label}(合計・目安) ${total}${m.unit}</span>`;
+            return `<span class="badge ${m.id}">${m.label}(合計) ${formatMetric(m, total)}${m.unit}</span>`;
           }).join('')}
         </div>
         ${dishes.map((d, i) => `
@@ -291,7 +300,8 @@
               <h2>${dishes.length > 1 ? (i + 1) + '. ' : ''}${escapeHtml(d.name)}</h2>
               <span class="dish-type-tag">${escapeHtml(d.type)}</span>
             </div>
-            <p class="dish-macro">${shown.filter(m => d[m.id] != null).map(m => m.label + ' ' + d[m.id] + m.unit).join(' ・ ')}</p>
+            <p class="dish-macro">${shown.map(m => m.label + ' ' + formatMetric(m, d[m.id] || 0) + m.unit).join(' ・ ')}</p>
+            ${d.nutritionNote ? `<p class="dish-nutrition-note">※${escapeHtml(d.nutritionNote)}</p>` : ''}
             <button class="save-btn${isSaved(d.id) ? ' saved' : ''}" data-id="${d.id}">${isSaved(d.id) ? '★ 保存済み' : '☆ 保存する'}</button>
             <div class="ingredients">
               <h3>材料</h3>
@@ -376,16 +386,19 @@
           steps: parsedItem.steps
         };
         // 選択していた指標だけ、AIの返答から数値を拾って記録する(選ばなかった指標は保存しない)
+        // 選択していた指標はすべて記録する(サーバーが成分表から計算して丸めた値をそのまま使う)
         activeMetrics.forEach(m => {
-          if(parsedItem[m.id] != null){
-            recipe[m.id] = Math.round(Number(parsedItem[m.id]) || 0);
-          }
+          const v = Number(parsedItem[m.id]);
+          recipe[m.id] = Number.isFinite(v) ? v : 0;
         });
+        if(typeof parsedItem.nutritionNote === 'string' && parsedItem.nutritionNote){
+          recipe.nutritionNote = parsedItem.nutritionNote;
+        }
         recipes.push(recipe);
         return recipe;
       });
       progress.finish();
-      renderCreatedCombo(dishes);
+      renderCreatedCombo(dishes, activeMetrics);
     } catch(err){
       showCreateError(err.userMessage || 'レシピの作成に失敗しました。もう一度お試しください。');
     } finally {
