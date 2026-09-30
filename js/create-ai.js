@@ -32,14 +32,20 @@
     generateBtn.textContent = isLoading ? '作成中…' : 'レシピを作成する';
   }
 
-  // ==== 作成中の進み具合(プログレスバー・経過時間・書き上がった料理名) ====
-  // AIの返答はストリーミングで少しずつ届くので、届いた文字数から進み具合を見積もります。
-  // (AIが考えている間は届く文字がないため、時間に応じてゆっくり進めます)
-  const CHARS_PER_DISH = 650; // 1品あたりのおおよその返答文字数(進み具合の見積もり用)
-  const progressFillEl = document.getElementById('create-progress-fill');
-  const progressTrackEl = progressFillEl.parentElement;
+  // ==== 作成中の進み具合(ぐるぐるアイコン・完了率・書き上がった料理名) ====
+  // AIの返答はストリーミングで少しずつ届くので、届いた文字数から完了率を見積もります。
+  // (AIが考えている間は届く文字がないため、時間に応じて進めます)
+  // 待ち時間を短く感じてもらうため、経過秒数は出さず、文言を数秒ごとに「次の工程」へ切り替えます。
+  const CHARS_PER_DISH = 650; // 1品あたりのおおよその返答文字数(完了率の見積もり用)
+  const THINKING_MESSAGES = [
+    '食材の組み合わせを選んでいます',
+    '味付けを決めています',
+    '栄養バランスを整えています',
+    '分量を調整しています'
+  ];
+  const MESSAGE_INTERVAL_MS = 3000;
+  const progressPercentEl = document.getElementById('create-progress-percent');
   const progressStatusEl = document.getElementById('create-progress-status');
-  const progressTimeEl = document.getElementById('create-progress-time');
   const progressDishesEl = document.getElementById('create-progress-dishes');
 
   function createProgress(count){
@@ -48,18 +54,18 @@
     let thinkingSince = startedAt;
     let text = '';
     let shownPercent = 0;
-    let lastNames = '';
+    let lastDishKey = '';
 
     function estimate(){
       const now = Date.now();
       if(phase === 'done') return 100;
-      if(phase === 'connect') return Math.min(6, (now - startedAt) / 300);
+      if(phase === 'connect') return Math.min(8, (now - startedAt) / 150);
       if(phase === 'thinking'){
-        // 最初は速く、だんだんゆっくり30%に近づける
+        // 序盤は速く進め、だんだんゆっくり40%に近づける
         const t = (now - thinkingSince) / 1000;
-        return 6 + 24 * (1 - Math.exp(-t / 12));
+        return 8 + 32 * (1 - Math.exp(-t / 10));
       }
-      return 30 + 65 * Math.min(1, text.length / (CHARS_PER_DISH * count));
+      return 40 + 57 * Math.min(1, text.length / (CHARS_PER_DISH * count));
     }
 
     function dishNames(){
@@ -73,8 +79,8 @@
     function renderDishes(){
       const names = dishNames();
       const key = names.join('\u0000') + '|' + phase;
-      if(key === lastNames) return names;
-      lastNames = key;
+      if(key === lastDishKey) return names;
+      lastDishKey = key;
       progressDishesEl.innerHTML = '';
       names.forEach((name, i) => {
         const li = document.createElement('li');
@@ -91,28 +97,30 @@
       return names;
     }
 
+    function statusText(pct, names){
+      if(phase === 'done') return 'できあがりました';
+      if(pct >= 85) return 'もうすぐできあがります';
+      if(phase === 'connect') return '準備しています';
+      if(phase === 'thinking'){
+        const i = Math.floor((Date.now() - thinkingSince) / MESSAGE_INTERVAL_MS);
+        return THINKING_MESSAGES[Math.min(i, THINKING_MESSAGES.length - 1)];
+      }
+      if(count > 1) return Math.max(1, names.length) + '品目の作り方をまとめています';
+      return '作り方をまとめています';
+    }
+
     function render(){
-      // 見積もりが戻っても、バーは後ろに下げない
+      // 見積もりが戻っても、完了率は後ろに下げない
       shownPercent = Math.max(shownPercent, estimate());
       const pct = Math.round(Math.min(phase === 'done' ? 100 : 97, shownPercent));
-      progressFillEl.style.width = pct + '%';
-      progressTrackEl.setAttribute('aria-valuenow', String(pct));
-      progressTimeEl.textContent = Math.floor((Date.now() - startedAt) / 1000) + '秒';
-
+      progressPercentEl.textContent = pct + '%';
+      progressPercentEl.setAttribute('aria-valuenow', String(pct));
       const names = renderDishes();
-      if(phase === 'connect') progressStatusEl.textContent = 'AIに接続しています…';
-      else if(phase === 'thinking') progressStatusEl.textContent = '食材と栄養目標から献立を考えています…';
-      else if(phase === 'writing'){
-        const n = Math.max(1, names.length);
-        progressStatusEl.textContent = count > 1
-          ? n + '/' + count + '品目のレシピを書いています…'
-          : 'レシピを書いています…';
-      }
-      else progressStatusEl.textContent = 'できあがりました';
+      const msg = statusText(pct, names);
+      if(progressStatusEl.textContent !== msg) progressStatusEl.textContent = msg;
     }
 
     progressDishesEl.innerHTML = '';
-    progressFillEl.style.width = '0%';
     render();
     const intervalId = setInterval(render, 250);
 
