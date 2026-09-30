@@ -395,47 +395,52 @@
   /* ==== レシピ作成中のプログレス ==== */
   .create-progress{
     margin:0 0 16px;
-    padding:14px 16px 12px;
+    padding:14px 16px;
     background:var(--card);
     border:1px solid var(--line);
     border-radius:14px;
   }
   .create-progress[hidden]{display:none;}
-  .progress-track{
-    height:8px;
-    background:var(--veg-bg);
-    border-radius:100px;
-    overflow:hidden;
-  }
-  .progress-fill{
-    height:100%;
-    width:0;
-    background:var(--veg);
-    border-radius:inherit;
-    transition:width .35s ease-out;
-  }
-  .progress-meta{
+  .progress-row{
     display:flex;
-    justify-content:space-between;
+    align-items:center;
     gap:12px;
-    margin-top:8px;
-    font-size:12px;
-    line-height:1.6;
+  }
+  .progress-spinner{
+    width:22px;
+    height:22px;
+    flex-shrink:0;
+    border-radius:50%;
+    border:3px solid var(--veg-bg);
+    border-top-color:var(--veg);
+    animation:progress-spin .8s linear infinite;
+  }
+  @keyframes progress-spin{ to{ transform:rotate(360deg); } }
+  .progress-status{
+    flex:1;
+    min-width:0;
+    font-size:13px;
+    line-height:1.5;
     color:var(--ink-soft);
   }
-  .progress-time{font-variant-numeric:tabular-nums; flex-shrink:0;}
-  .progress-dishes{list-style:none; margin:8px 0 0; padding:0;}
+  .progress-percent{
+    flex-shrink:0;
+    font-size:17px;
+    font-weight:700;
+    color:var(--veg);
+    font-variant-numeric:tabular-nums;
+  }
+  .progress-dishes{list-style:none; margin:10px 0 0; padding:0 0 0 34px;}
   .progress-dishes:empty{display:none;}
   .progress-dishes li{
     display:flex;
     gap:8px;
-    padding:6px 0 0;
+    padding:4px 0 0;
     font-size:13px;
     color:var(--ink);
   }
   .progress-dishes li.is-writing{color:var(--ink-soft);}
   .progress-dish-mark{width:1em; flex-shrink:0; color:var(--veg); font-weight:700;}
   @media (prefers-reduced-motion: reduce){
-    .progress-fill{transition:none;}
+    .progress-spinner{animation-duration:2.4s;}
   }
-
