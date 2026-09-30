@@ -1,7 +1,7 @@
 // ==== レシピ作成機能(食材+雰囲気キーワード+選択した栄養指標の目標値・品数からAIがレシピを考える) ====
 // config.js の NUTRIENT_METRICS、utils.js の computeEffort/withPieceCount、
 // save.js の isSaved/toggleSave/recipes配列、auth.js の isLoggedIn/checkSession に依存します。
-// AIの呼び出しはサーバー(/api/ai/create-recipe)が行います。ブラウザには食材・雰囲気・品数・栄養目標だけを送り、
+// AIの呼び出しはサーバー(/api/ai/create-recipe)が行い、生成中の内容はストリーミングで少しずつ届きます。ブラウザには食材・雰囲気・品数・栄養目標だけを送り、
 // APIキー・モデル・プロンプトはサーバー側(管理者が設定)で扱うため、この画面には一切現れません。
 // AIが使えるのはログイン中のユーザーだけで、アプリ全体の1日の利用回数に上限があります。
 
@@ -30,6 +30,136 @@
     generateBtn.disabled = isLoading;
     generateBtn.style.opacity = isLoading ? '0.6' : '1';
     generateBtn.textContent = isLoading ? '作成中…' : 'レシピを作成する';
+  }
+
+  // ==== 作成中の進み具合(プログレスバー・経過時間・書き上がった料理名) ====
+  // AIの返答はストリーミングで少しずつ届くので、届いた文字数から進み具合を見積もります。
+  // (AIが考えている間は届く文字がないため、時間に応じてゆっくり進めます)
+  const CHARS_PER_DISH = 650; // 1品あたりのおおよその返答文字数(進み具合の見積もり用)
+  const progressFillEl = document.getElementById('create-progress-fill');
+  const progressTrackEl = progressFillEl.parentElement;
+  const progressStatusEl = document.getElementById('create-progress-status');
+  const progressTimeEl = document.getElementById('create-progress-time');
+  const progressDishesEl = document.getElementById('create-progress-dishes');
+
+  function createProgress(count){
+    const startedAt = Date.now();
+    let phase = 'connect';   // connect → thinking → writing → done
+    let thinkingSince = startedAt;
+    let text = '';
+    let shownPercent = 0;
+    let lastNames = '';
+
+    function estimate(){
+      const now = Date.now();
+      if(phase === 'done') return 100;
+      if(phase === 'connect') return Math.min(6, (now - startedAt) / 300);
+      if(phase === 'thinking'){
+        // 最初は速く、だんだんゆっくり30%に近づける
+        const t = (now - thinkingSince) / 1000;
+        return 6 + 24 * (1 - Math.exp(-t / 12));
+      }
+      return 30 + 65 * Math.min(1, text.length / (CHARS_PER_DISH * count));
+    }
+
+    function dishNames(){
+      const names = [];
+      const re = /"name"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+      let m;
+      while((m = re.exec(text)) !== null) names.push(m[1]);
+      return names.slice(0, count);
+    }
+
+    function renderDishes(){
+      const names = dishNames();
+      const key = names.join('\u0000') + '|' + phase;
+      if(key === lastNames) return names;
+      lastNames = key;
+      progressDishesEl.innerHTML = '';
+      names.forEach((name, i) => {
+        const li = document.createElement('li');
+        const finished = phase === 'done' || i < names.length - 1;
+        const mark = document.createElement('span');
+        mark.className = 'progress-dish-mark';
+        mark.textContent = finished ? '✓' : '…';
+        const label = document.createElement('span');
+        label.textContent = (count > 1 ? (i + 1) + '品目 ' : '') + name;
+        li.classList.toggle('is-writing', !finished);
+        li.append(mark, label);
+        progressDishesEl.appendChild(li);
+      });
+      return names;
+    }
+
+    function render(){
+      // 見積もりが戻っても、バーは後ろに下げない
+      shownPercent = Math.max(shownPercent, estimate());
+      const pct = Math.round(Math.min(phase === 'done' ? 100 : 97, shownPercent));
+      progressFillEl.style.width = pct + '%';
+      progressTrackEl.setAttribute('aria-valuenow', String(pct));
+      progressTimeEl.textContent = Math.floor((Date.now() - startedAt) / 1000) + '秒';
+
+      const names = renderDishes();
+      if(phase === 'connect') progressStatusEl.textContent = 'AIに接続しています…';
+      else if(phase === 'thinking') progressStatusEl.textContent = '食材と栄養目標から献立を考えています…';
+      else if(phase === 'writing'){
+        const n = Math.max(1, names.length);
+        progressStatusEl.textContent = count > 1
+          ? n + '/' + count + '品目のレシピを書いています…'
+          : 'レシピを書いています…';
+      }
+      else progressStatusEl.textContent = 'できあがりました';
+    }
+
+    progressDishesEl.innerHTML = '';
+    progressFillEl.style.width = '0%';
+    render();
+    const intervalId = setInterval(render, 250);
+
+    return {
+      started(){ if(phase === 'connect'){ phase = 'thinking'; thinkingSince = Date.now(); } render(); },
+      thinking(){ if(phase === 'connect'){ phase = 'thinking'; thinkingSince = Date.now(); } },
+      append(chunk){ text += chunk; phase = 'writing'; },
+      finish(){ phase = 'done'; render(); clearInterval(intervalId); },
+      stop(){ clearInterval(intervalId); }
+    };
+  }
+
+  // サーバーからのストリーミング返答(1行1イベントのJSON)を読み、最終結果の料理リストを返す
+  async function readRecipeStream(response, progress){
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let dishes = null;
+
+    function handle(line){
+      if(!line.trim()) return;
+      let ev;
+      try { ev = JSON.parse(line); } catch(e){ return; }
+      if(ev.type === 'start') progress.started();
+      else if(ev.type === 'thinking') progress.thinking();
+      else if(ev.type === 'delta' && typeof ev.text === 'string') progress.append(ev.text);
+      else if(ev.type === 'done') dishes = ev.dishes;
+      else if(ev.type === 'error'){
+        const err = new Error('stream error');
+        err.userMessage = ev.error;
+        throw err;
+      }
+    }
+
+    for(;;){
+      const { done, value } = await reader.read();
+      if(done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl;
+      while((nl = buffer.indexOf('\n')) >= 0){
+        handle(buffer.slice(0, nl));
+        buffer = buffer.slice(nl + 1);
+      }
+    }
+    handle(buffer + decoder.decode());
+    if(!dishes) throw new Error('stream ended without result');
+    return dishes;
   }
 
   function getCreateCount(){
@@ -186,6 +316,7 @@
     setCreateLoading(true);
     createResultEl.hidden = true;
     createNoteEl.hidden = true;
+    const progress = createProgress(getCreateCount());
     try {
       const target = getCreateTarget();
       const activeMetrics = getActiveMetrics();
@@ -201,15 +332,23 @@
           targets: targets
         })
       });
-      const data = await response.json().catch(() => ({}));
-      if(!response.ok){
-        // ログインの期限切れなら状態を更新し、サーバーが返した日本語メッセージ(上限到達など)をそのまま表示する
-        if(response.status === 401) checkSession();
-        const apiErr = new Error('API request failed: ' + response.status);
-        apiErr.userMessage = data.error;
-        throw apiErr;
+      const contentType = response.headers.get('Content-Type') || '';
+      let items = null;
+      if(response.ok && contentType.includes('ndjson') && response.body){
+        // 生成中の内容を少しずつ受け取りながら進み具合を表示する
+        const streamed = await readRecipeStream(response, progress);
+        items = Array.isArray(streamed) ? streamed : null;
+      } else {
+        const data = await response.json().catch(() => ({}));
+        if(!response.ok){
+          // ログインの期限切れなら状態を更新し、サーバーが返した日本語メッセージ(上限到達など)をそのまま表示する
+          if(response.status === 401) checkSession();
+          const apiErr = new Error('API request failed: ' + response.status);
+          apiErr.userMessage = data.error;
+          throw apiErr;
+        }
+        items = Array.isArray(data.dishes) ? data.dishes : null;
       }
-      const items = Array.isArray(data.dishes) ? data.dishes : null;
       if(!items || !items.length){
         throw new Error('Unexpected response shape');
       }
@@ -237,10 +376,12 @@
         recipes.push(recipe);
         return recipe;
       });
+      progress.finish();
       renderCreatedCombo(dishes);
     } catch(err){
       showCreateError(err.userMessage || 'レシピの作成に失敗しました。もう一度お試しください。');
     } finally {
+      progress.stop();
       setCreateLoading(false);
     }
   }
