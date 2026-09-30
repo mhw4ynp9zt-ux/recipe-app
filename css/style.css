@@ -444,3 +444,11 @@
   @media (prefers-reduced-motion: reduce){
     .progress-spinner{animation-duration:2.4s;}
   }
+
+  /* 栄養計算の補足(AIが成分値を補った食材がある場合など) */
+  .dish-nutrition-note{
+    font-size:11px;
+    line-height:1.6;
+    color:var(--ink-soft);
+    margin:4px 0 0;
+  }
