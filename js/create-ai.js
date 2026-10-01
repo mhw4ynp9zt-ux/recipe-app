@@ -175,10 +175,14 @@
     return Math.round(v * 10) / 10;
   }
 
-  // 全品の合計が目標の±5%に収まったかの表示(サーバーが計算・必要ならAIに作り直させた結果)
+  // 全品の合計が目標の許容範囲(サーバーの recipe-prompt.js の TOLERANCE。現在±10%)に収まったかの表示
+  // (サーバーが計算・必要ならAIに作り直させた結果)。作り直して収まった場合は、控えめに「自動調整した」ことだけ添える。
   function renderTargetCheck(tc){
     if(!tc || !Array.isArray(tc.results)) return '';
-    if(tc.ok) return '<p class="target-check">✓ 目標の±' + tc.tolerancePct + '%以内に収まっています</p>';
+    if(tc.ok){
+      const adjusted = tc.attempts > 1 ? '(目標値に合わせて自動調整しました)' : '';
+      return '<p class="target-check">✓ 目標の±' + tc.tolerancePct + '%以内に収まっています' + adjusted + '</p>';
+    }
     const items = tc.results.filter(r => !r.ok).map(r => {
       const m = NUTRIENT_METRICS.find(x => x.id === r.id);
       const label = m ? m.label : r.id;
@@ -274,6 +278,15 @@
     createResultEl.scrollIntoView({behavior:'smooth', block:'start'});
   }
 
+  // サーバーが返した debug(管理者のみ)に、本当の問題があるかを判定する。
+  //   ・warn / error のイベントがある、または最終的に目標の許容範囲に収まらなかった → 問題あり(警告として記録)
+  //   ・info だけ(作り直しは入ったが、最終的に目標に収まった)→ 問題なし。警告もエラーログも出さない
+  function debugHasProblem(debug, targetCheck){
+    const events = debug && Array.isArray(debug.events) ? debug.events : [];
+    if(events.some(ev => ev && ev.level !== 'info')) return true;
+    return !!(targetCheck && targetCheck.ok === false);
+  }
+
   async function generateRecipe(){
     const ingredientsRaw = document.getElementById('create-ingredients').value.trim();
     const moodRaw = document.getElementById('create-mood').value.trim();
@@ -337,8 +350,9 @@
       if(!data || typeof data !== 'object') data = {};
       logContext.serverError = data.error;
       logContext.debug = data.debug;
-      if(response.ok && data.debug){
-        // 作成は成功したが、作り直しの失敗・栄養計算の失敗・目標に収まらなかった等の問題があった場合
+      if(response.ok && data.debug && debugHasProblem(data.debug, data.targetCheck)){
+        // 作成は成功したが、作り直しの失敗・栄養計算の失敗・最終的に目標に収まらなかった等の問題があった場合だけ警告にする。
+        // 作り直しが入っても最終的に目標に収まった場合(debug が info だけ)は、警告にもエラーログにもしない。
         logWarn('create-recipe', '作成は成功しましたが、サーバーが問題を報告しました', {
           request: logContext.request, status: response.status, debug: data.debug,
         });
