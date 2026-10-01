@@ -1,14 +1,10 @@
 // ==== レシピ作成機能(食材+雰囲気キーワード+選択した栄養指標の目標値・品数からAIがレシピを考える) ====
-// config.js の NUTRIENT_METRICS、utils.js の computeEffort/withPieceCount、
+// config.js の NUTRIENT_METRICS、utils.js の computeEffort/withPieceCount/escapeHtml/表示ヘルパー、
 // save.js の isSaved/toggleSave/recipes配列、auth.js の isLoggedIn/checkSession に依存します。
 // 栄養量はAIの目分量ではなく、サーバーが日本食品標準成分表(D1)から計算した値を表示します(内訳は各品の「栄養の計算内訳」)。
 // AIの呼び出しはサーバー(/api/ai/create-recipe)が行います。ブラウザには食材・雰囲気・品数・栄養目標だけを送り、
 // APIキー・モデル・プロンプトはサーバー側(管理者が設定)で扱うため、この画面には一切現れません。
 // AIが使えるのはログイン中のユーザーだけで、アプリ全体の1日の利用回数に上限があります。
-
-  function escapeHtml(str){
-    return String(str).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-  }
 
   const createResultEl = document.getElementById('create-result');
   const createLoadingEl = document.getElementById('create-loading');
@@ -94,9 +90,12 @@
   function renderTargetInputs(){
     const active = getActiveMetrics();
     targetRowEl.innerHTML = active.map(m => `
-      <div class="option-group">
-        <label class="option-label" for="create-target-${m.id}">${m.label}(${m.unit})</label>
-        <input type="number" id="create-target-${m.id}" inputmode="numeric" min="0" value="${m.default}">
+      <div class="target-line">
+        <label for="create-target-${m.id}">${m.label}</label>
+        <span class="target-field">
+          <input type="number" id="create-target-${m.id}" inputmode="numeric" min="0" value="${m.default}" aria-label="${m.label}の目標(${m.unit})">
+          <span class="unit">${m.unit}</span>
+        </span>
       </div>
     `).join('');
     active.forEach(m => {
@@ -108,7 +107,7 @@
   // トグルチップ自体を描画し直す(ON/OFFの見た目を反映)
   function renderMetricToggles(){
     metricToggleRowEl.innerHTML = NUTRIENT_METRICS.map(m =>
-      `<button type="button" class="metric-toggle-btn${enabledMetrics[m.id] ? ' active' : ''}" data-metric="${m.id}">${m.label}</button>`
+      `<button type="button" class="metric-toggle-btn${enabledMetrics[m.id] ? ' active' : ''}" data-metric="${m.id}" aria-pressed="${enabledMetrics[m.id] ? 'true' : 'false'}">${m.label}</button>`
     ).join('');
   }
 
@@ -185,7 +184,7 @@
       .map(m => m.label + ' ' + d.nutrition[m.id] + m.unit).join(' ・ ');
     return `
       <details class="nutrition-detail">
-        <summary>栄養の計算内訳</summary>
+        <summary>計算の内訳を見る</summary>
         <p class="nd-total">${all}</p>
         <ul>${rows}</ul>
         <p class="nd-note">日本食品標準成分表(八訂)増補2023年の「可食部100gあたり」の値から計算。調理による水分・油の増減は考慮していません。</p>
@@ -193,39 +192,43 @@
   }
 
   function renderCreatedCombo(dishes, nutritionOk, targetCheck){
-    // このバッチで実際に値が入っている指標だけをバッジ・表示対象にする(選択しなかった指標は表示しない)
+    // このバッチで実際に値が入っている指標だけを表示対象にする(選択しなかった指標は表示しない)
     const shown = NUTRIENT_METRICS.filter(m => dishes.some(d => d[m.id] != null));
     const offIds = new Set(((targetCheck && targetCheck.results) || []).filter(r => !r.ok).map(r => r.id));
+    const multi = dishes.length > 1;
+    const totals = {};
+    shown.forEach(m => { totals[m.id] = roundNutrient(dishes.reduce((s, d) => s + (d[m.id] || 0), 0)); });
+    const checkHtml = nutritionOk ? renderTargetCheck(targetCheck) : '';
     createResultEl.hidden = false;
     createResultEl.innerHTML = `
-      <div class="recipe-card">
-        <p class="recipe-tag">入力した内容からAIが作成</p>
-        <div class="badges">
-          ${shown.map(m => {
-            const total = roundNutrient(dishes.reduce((s, d) => s + (d[m.id] || 0), 0));
-            return `<span class="badge ${m.id}${offIds.has(m.id) ? ' off' : ''}">${m.label}(合計) ${total}${m.unit}</span>`;
-          }).join('')}
-        </div>
-        ${nutritionOk ? renderTargetCheck(targetCheck) : ''}
+      <div class="spread">
+        ${multi ? `
+          <section class="totals">
+            <h3>全品の合計</h3>
+            ${renderNutrientRow(totals, shown, offIds)}
+            ${checkHtml}
+          </section>
+        ` : ''}
         ${dishes.map((d, i) => `
-          <div class="dish-block">
+          <article class="dish">
             <div class="dish-head">
-              <h2>${dishes.length > 1 ? (i + 1) + '. ' : ''}${escapeHtml(d.name)}</h2>
-              <span class="dish-type-tag">${escapeHtml(d.type)}</span>
+              <p class="dish-meta"><span>${escapeHtml(d.type)}</span>${multi ? `<span>${i + 1}品目</span>` : ''}</p>
+              <button class="save-btn${isSaved(d.id) ? ' saved' : ''}" data-id="${d.id}">${isSaved(d.id) ? '★ 保存済み' : '☆ 保存する'}</button>
             </div>
-            <p class="dish-macro">${shown.filter(m => d[m.id] != null).map(m => m.label + ' ' + d[m.id] + m.unit).join(' ・ ')}</p>
+            <h2 class="dish-title">${escapeHtml(d.name)}</h2>
+            ${renderNutrientRow(d, shown, multi ? null : offIds)}
+            ${multi ? '' : checkHtml}
             ${renderNutritionWarn(d)}
-            <button class="save-btn${isSaved(d.id) ? ' saved' : ''}" data-id="${d.id}">${isSaved(d.id) ? '★ 保存済み' : '☆ 保存する'}</button>
-            <div class="ingredients">
+            <section class="ingredients">
               <h3>材料</h3>
-              <ul>${d.ingredients.map(x => '<li>' + withPieceCount(escapeHtml(x)) + '</li>').join('')}</ul>
-            </div>
-            <div class="steps">
+              ${renderIngredientsHtml(d.ingredients)}
+            </section>
+            <section class="steps">
               <h3>作り方</h3>
-              <ol>${d.steps.map(x => '<li>' + escapeHtml(x) + '</li>').join('')}</ol>
-            </div>
+              ${renderStepsHtml(d.steps)}
+            </section>
             ${renderNutritionDetail(d)}
-          </div>
+          </article>
         `).join('')}
       </div>
     `;
