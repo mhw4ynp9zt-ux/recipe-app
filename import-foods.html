@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>成分表の取り込み(管理者用)</title>
+<style>
+  body{font-family:'Zen Kaku Gothic New',system-ui,sans-serif;background:#F1F4EC;color:#0E1B14;margin:0;padding:24px;}
+  .box{max-width:560px;margin:0 auto;background:#fff;border:1px solid #DDE3D6;border-radius:16px;padding:24px;}
+  h1{font-size:18px;margin:0 0 12px;}
+  p{line-height:1.7;font-size:14px;margin:8px 0;}
+  button{font:inherit;font-size:15px;padding:12px 20px;border:0;border-radius:10px;background:#4C7A3D;color:#fff;cursor:pointer;margin-top:12px;}
+  button:disabled{opacity:.5;cursor:default;}
+  progress{width:100%;height:16px;margin-top:14px;}
+  #msg{margin-top:12px;font-size:14px;line-height:1.7;white-space:pre-wrap;}
+  .ok{color:#2f6b2f;font-weight:700;}
+  .ng{color:#b24630;}
+  .small{font-size:12px;color:#33453A;}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>日本食品標準成分表の取り込み(管理者用)</h1>
+  <p>栄養計算に使う成分表(八訂 増補2023年・2,538食品)を、このアプリのデータベースに登録します。</p>
+  <p>先に、このアプリの「設定」タブから<strong>管理者のアカウントでログイン</strong>してください(同じブラウザでこのページを開いている必要があります)。</p>
+  <p id="status">登録状況を確認中…</p>
+  <button id="run" disabled>成分表を登録する</button>
+  <progress id="bar" value="0" max="100" hidden></progress>
+  <div id="msg"></div>
+  <p class="small">何度実行しても、同じ内容に上書きされるだけです(重複はしません)。途中で止まったときは、もう一度押してください。</p>
+</div>
+<script>
+(function(){
+  var CHUNK = 100;
+  var statusEl = document.getElementById('status');
+  var runBtn = document.getElementById('run');
+  var barEl = document.getElementById('bar');
+  var msgEl = document.getElementById('msg');
+
+  function say(text, cls){ msgEl.textContent = text; msgEl.className = cls || ''; }
+
+  function explain(res, data){
+    if(res.status === 401) return 'ログインしていません。アプリの「設定」タブでパスキーでログインしてから、このページを開き直してください。';
+    if(res.status === 403) return '管理者のアカウントではありません。管理者でログインしてください。';
+    return (data && data.error) || ('エラーが発生しました(' + res.status + ')');
+  }
+
+  async function refreshStatus(){
+    try {
+      var res = await fetch('/api/admin/import-foods');
+      var data = await res.json().catch(function(){ return {}; });
+      if(!res.ok){ statusEl.textContent = explain(res, data); runBtn.disabled = true; return; }
+      statusEl.textContent = '現在の登録数: ' + data.total + ' 件' + (data.total >= 2538 ? '(登録済みです)' : '');
+      runBtn.disabled = false;
+    } catch(e){
+      statusEl.textContent = '通信に失敗しました。ネットワークを確認してください。';
+    }
+  }
+
+  runBtn.addEventListener('click', async function(){
+    runBtn.disabled = true;
+    barEl.hidden = false; barEl.value = 0;
+    say('データを読み込み中…');
+    try {
+      var fileRes = await fetch('/data/foods.json');
+      if(!fileRes.ok) throw new Error('data/foods.json が見つかりません(GitHubにアップロードされているか確認してください)');
+      var rows = (await fileRes.json()).rows;
+      barEl.max = rows.length;
+      var total = 0;
+      for(var i = 0; i < rows.length; i += CHUNK){
+        say('登録中… ' + Math.min(i + CHUNK, rows.length) + ' / ' + rows.length + ' 件');
+        var res = await fetch('/api/admin/import-foods', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ init: i === 0, rows: rows.slice(i, i + CHUNK) })
+        });
+        var data = await res.json().catch(function(){ return {}; });
+        if(!res.ok) throw new Error(explain(res, data));
+        total = data.total;
+        barEl.value = Math.min(i + CHUNK, rows.length);
+      }
+      say('完了しました。登録数: ' + total + ' 件\nアプリの「作る」タブでレシピを作成して確認してください。', 'ok');
+      statusEl.textContent = '現在の登録数: ' + total + ' 件(登録済みです)';
+    } catch(e){
+      say('失敗しました: ' + e.message, 'ng');
+    } finally {
+      runBtn.disabled = false;
+    }
+  });
+
+  refreshStatus();
+})();
+</script>
+</body>
+</html>
