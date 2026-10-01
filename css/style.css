@@ -79,44 +79,54 @@ button{font-family:inherit; color:inherit;}
   padding:calc(env(safe-area-inset-top) + 22px) 16px calc(env(safe-area-inset-bottom) + var(--tabbar-h) + 32px);
 }
 
-/* ---------- ヘッダー(深緑のバナー + 白抜きのロゴ) ---------- */
+/* ---------- ヘッダー(紙の背景になじむ、やわらかい文字ロゴ) ---------- */
 .hero{
   position:relative;
-  overflow:hidden;
-  margin:4px 0 20px;
-  padding:26px 20px 22px;
-  background:var(--brand);
-  color:#fff;
-  border-radius:18px;
+  isolation:isolate;
+  margin:6px 2px 24px;
+  padding:4px 0 0;
+  color:var(--ink);
+}
+/* ロゴの後ろに、ぼんやり広がる淡い緑 */
+.hero::after{
+  content:"";
+  position:absolute;
+  z-index:-1;
+  left:-36px; top:-44px;
+  width:300px; height:190px;
+  background:radial-gradient(closest-side, rgba(47,93,58,.14), rgba(47,93,58,0));
+  pointer-events:none;
 }
 /* ロゴの上の小さな英字 */
 .hero::before{
   content:"KONDATE";
-  position:relative;
   display:block;
-  margin:0 0 8px;
-  font-size:11px; font-weight:700; letter-spacing:.3em;
-  opacity:.7;
+  margin:0 0 4px 3px;
+  font-size:11px; font-weight:700; letter-spacing:.32em;
+  color:var(--brand);
+  opacity:.65;
 }
 .brand{
   display:block;
-  margin:0 0 12px;
+  margin:0 0 14px;
+  padding-right:68px;
   font-family:var(--logo);
   font-weight:900;
-  font-size:clamp(44px, 15vw, 60px);
-  line-height:1.1;
-  letter-spacing:.08em;
-  color:#fff;
+  font-size:clamp(44px, 14.5vw, 58px);
+  line-height:1.15;
+  letter-spacing:.06em;
+  color:var(--brand);
 }
-/* 的のマークは、バナーの右下に大きく薄く敷く */
+/* 的のマークは、右上のやさしい丸の中に */
 .brand-mark{
   position:absolute;
-  right:-40px; bottom:-70px;
-  width:230px; height:230px;
-  opacity:.1;
-  pointer-events:none;
+  right:2px; top:14px;
+  width:54px; height:54px;
+  padding:13px;
+  border-radius:50%;
+  background:var(--brand-soft);
+  color:var(--brand);
 }
-.brand-mark circle{stroke-width:.8;}
 /* 見出し(h1)は画面には出さず、読み上げ用に残す */
 .hero h1{
   position:absolute;
@@ -128,11 +138,11 @@ button{font-family:inherit; color:inherit;}
   border:0;
 }
 .hero-lead{
-  position:relative;
   margin:0;
+  padding-left:3px;
   font-size:13.5px;
-  line-height:1.75;
-  color:rgba(255,255,255,.88);
+  line-height:1.8;
+  color:var(--ink-soft);
 }
 
 /* ---------- 下部のタブバー(親指で届く位置) ---------- */
