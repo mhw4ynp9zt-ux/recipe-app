@@ -62,7 +62,13 @@
 
     <button class="reroll" id="btn-generate" style="margin-bottom:16px;">レシピを作成する</button>
 
-    <p id="create-loading" class="input-hint" hidden style="text-align:center;">レシピを考えています…(画面を開いたままお待ちください)</p>
+    <div id="create-loading" class="create-progress" hidden role="status" aria-live="polite">
+      <p class="cp-status" id="cp-status">レシピを考えています…</p>
+      <div class="cp-bar"><div class="cp-fill" id="cp-fill"></div></div>
+      <p class="cp-meta"><span id="cp-percent">0%</span><span id="cp-elapsed">0秒</span></p>
+      <ol class="cp-steps" id="cp-steps"></ol>
+      <p class="cp-note" id="cp-note">画面を開いたままお待ちください(通常10〜30秒ほど)</p>
+    </div>
     <p id="create-error" class="input-hint" hidden style="text-align:center;color:var(--protein);"></p>
     <div id="create-log-box" class="log-box" hidden>
       <p class="input-hint" id="create-log-count"></p>
