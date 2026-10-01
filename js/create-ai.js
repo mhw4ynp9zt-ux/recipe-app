@@ -1,7 +1,8 @@
 // ==== レシピ作成機能(食材+雰囲気キーワード+選択した栄養指標の目標値・品数からAIがレシピを考える) ====
 // config.js の NUTRIENT_METRICS、utils.js の computeEffort/withPieceCount、
 // save.js の isSaved/toggleSave/recipes配列、auth.js の isLoggedIn/checkSession に依存します。
-// AIの呼び出しはサーバー(/api/ai/create-recipe)が行い、生成中の内容はストリーミングで少しずつ届きます。ブラウザには食材・雰囲気・品数・栄養目標だけを送り、
+// 栄養量はAIの目分量ではなく、サーバーが日本食品標準成分表(D1)から計算した値を表示します(内訳は各品の「栄養の計算内訳」)。
+// AIの呼び出しはサーバー(/api/ai/create-recipe)が行います。ブラウザには食材・雰囲気・品数・栄養目標だけを送り、
 // APIキー・モデル・プロンプトはサーバー側(管理者が設定)で扱うため、この画面には一切現れません。
 // AIが使えるのはログイン中のユーザーだけで、アプリ全体の1日の利用回数に上限があります。
 
@@ -30,144 +31,6 @@
     generateBtn.disabled = isLoading;
     generateBtn.style.opacity = isLoading ? '0.6' : '1';
     generateBtn.textContent = isLoading ? '作成中…' : 'レシピを作成する';
-  }
-
-  // ==== 作成中の進み具合(ぐるぐるアイコン・完了率・書き上がった料理名) ====
-  // AIの返答はストリーミングで少しずつ届くので、届いた文字数から完了率を見積もります。
-  // (AIが考えている間は届く文字がないため、時間に応じて進めます)
-  // 待ち時間を短く感じてもらうため、経過秒数は出さず、文言を数秒ごとに「次の工程」へ切り替えます。
-  const CHARS_PER_DISH = 650; // 1品あたりのおおよその返答文字数(完了率の見積もり用)
-  const THINKING_MESSAGES = [
-    '食材の組み合わせを選んでいます',
-    '味付けを決めています',
-    '栄養バランスを整えています',
-    '分量を調整しています'
-  ];
-  const MESSAGE_INTERVAL_MS = 3000;
-  const progressPercentEl = document.getElementById('create-progress-percent');
-  const progressStatusEl = document.getElementById('create-progress-status');
-  const progressDishesEl = document.getElementById('create-progress-dishes');
-
-  function createProgress(count){
-    const startedAt = Date.now();
-    let phase = 'connect';   // connect → thinking → writing → done
-    let thinkingSince = startedAt;
-    let text = '';
-    let shownPercent = 0;
-    let lastDishKey = '';
-
-    function estimate(){
-      const now = Date.now();
-      if(phase === 'done') return 100;
-      if(phase === 'connect') return Math.min(8, (now - startedAt) / 150);
-      if(phase === 'thinking'){
-        // 序盤は速く進め、だんだんゆっくり40%に近づける
-        const t = (now - thinkingSince) / 1000;
-        return 8 + 32 * (1 - Math.exp(-t / 10));
-      }
-      return 40 + 57 * Math.min(1, text.length / (CHARS_PER_DISH * count));
-    }
-
-    function dishNames(){
-      const names = [];
-      const re = /"name"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
-      let m;
-      while((m = re.exec(text)) !== null) names.push(m[1]);
-      return names.slice(0, count);
-    }
-
-    function renderDishes(){
-      const names = dishNames();
-      const key = names.join('\u0000') + '|' + phase;
-      if(key === lastDishKey) return names;
-      lastDishKey = key;
-      progressDishesEl.innerHTML = '';
-      names.forEach((name, i) => {
-        const li = document.createElement('li');
-        const finished = phase === 'done' || i < names.length - 1;
-        const mark = document.createElement('span');
-        mark.className = 'progress-dish-mark';
-        mark.textContent = finished ? '✓' : '…';
-        const label = document.createElement('span');
-        label.textContent = (count > 1 ? (i + 1) + '品目 ' : '') + name;
-        li.classList.toggle('is-writing', !finished);
-        li.append(mark, label);
-        progressDishesEl.appendChild(li);
-      });
-      return names;
-    }
-
-    function statusText(pct, names){
-      if(phase === 'done') return 'できあがりました';
-      if(pct >= 85) return 'もうすぐできあがります';
-      if(phase === 'connect') return '準備しています';
-      if(phase === 'thinking'){
-        const i = Math.floor((Date.now() - thinkingSince) / MESSAGE_INTERVAL_MS);
-        return THINKING_MESSAGES[Math.min(i, THINKING_MESSAGES.length - 1)];
-      }
-      if(count > 1) return Math.max(1, names.length) + '品目の作り方をまとめています';
-      return '作り方をまとめています';
-    }
-
-    function render(){
-      // 見積もりが戻っても、完了率は後ろに下げない
-      shownPercent = Math.max(shownPercent, estimate());
-      const pct = Math.round(Math.min(phase === 'done' ? 100 : 97, shownPercent));
-      progressPercentEl.textContent = pct + '%';
-      progressPercentEl.setAttribute('aria-valuenow', String(pct));
-      const names = renderDishes();
-      const msg = statusText(pct, names);
-      if(progressStatusEl.textContent !== msg) progressStatusEl.textContent = msg;
-    }
-
-    progressDishesEl.innerHTML = '';
-    render();
-    const intervalId = setInterval(render, 250);
-
-    return {
-      started(){ if(phase === 'connect'){ phase = 'thinking'; thinkingSince = Date.now(); } render(); },
-      thinking(){ if(phase === 'connect'){ phase = 'thinking'; thinkingSince = Date.now(); } },
-      append(chunk){ text += chunk; phase = 'writing'; },
-      finish(){ phase = 'done'; render(); clearInterval(intervalId); },
-      stop(){ clearInterval(intervalId); }
-    };
-  }
-
-  // サーバーからのストリーミング返答(1行1イベントのJSON)を読み、最終結果の料理リストを返す
-  async function readRecipeStream(response, progress){
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let dishes = null;
-
-    function handle(line){
-      if(!line.trim()) return;
-      let ev;
-      try { ev = JSON.parse(line); } catch(e){ return; }
-      if(ev.type === 'start') progress.started();
-      else if(ev.type === 'thinking') progress.thinking();
-      else if(ev.type === 'delta' && typeof ev.text === 'string') progress.append(ev.text);
-      else if(ev.type === 'done') dishes = ev.dishes;
-      else if(ev.type === 'error'){
-        const err = new Error('stream error');
-        err.userMessage = ev.error;
-        throw err;
-      }
-    }
-
-    for(;;){
-      const { done, value } = await reader.read();
-      if(done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let nl;
-      while((nl = buffer.indexOf('\n')) >= 0){
-        handle(buffer.slice(0, nl));
-        buffer = buffer.slice(nl + 1);
-      }
-    }
-    handle(buffer + decoder.decode());
-    if(!dishes) throw new Error('stream ended without result');
-    return dishes;
   }
 
   function getCreateCount(){
@@ -272,26 +135,60 @@
     });
   });
 
-  // 指標ごとの桁数で数値を丸めて表示用の文字列にする(塩分・食物繊維は0.1g単位)
-  function formatMetric(m, value){
-    const decimals = m.decimals || 0;
-    const p = Math.pow(10, decimals);
-    return (Math.round(value * p) / p).toFixed(decimals);
+  // 栄養値は小数1桁まで(足し算の誤差で 12.299999 のような表示にならないように)
+  function roundNutrient(v){
+    return Math.round(v * 10) / 10;
   }
 
-  function renderCreatedCombo(dishes, activeMetrics){
-    // 検索条件で選んだ指標はすべて、すべての品に表示する(値はサーバーが成分表から計算済み)
-    const shown = activeMetrics && activeMetrics.length
-      ? activeMetrics
-      : NUTRIENT_METRICS.filter(m => dishes.some(d => d[m.id] != null));
+  // 成分表と照合できなかった食材・値がなかった食材があれば、栄養量の下に知らせる
+  function renderNutritionWarn(d){
+    const c = d.nutritionCheck;
+    if(!c) return '';
+    const names = list => '「' + list.map(escapeHtml).join('」「') + '」';
+    const parts = [];
+    if(c.unmatched && c.unmatched.length){
+      parts.push(names(c.unmatched) + 'は成分表と照合できなかった(または重さが不明だった)ため、栄養量に含まれていません。');
+    }
+    if(c.missing && c.missing.length){
+      parts.push(names(c.missing) + 'は成分表に値のない項目があり、その分は0として計算しています。');
+    }
+    return parts.length ? '<p class="nutrition-warn">' + parts.join('') + '</p>' : '';
+  }
+
+  // 栄養の計算内訳: どの食材を、成分表のどの食品として計算したか
+  function renderNutritionDetail(d){
+    if(!d.nutrition || !Array.isArray(d.ingredientDetails)) return '';
+    const rows = d.ingredientDetails.map(ing => {
+      const left = escapeHtml(ing.name) + (ing.grams > 0 ? ' ' + ing.grams + 'g' : '');
+      let right;
+      if(ing.match) right = escapeHtml(ing.match.label);
+      else if(ing.grams === 0) right = '<span class="nd-skip">計算に含めていません</span>';
+      else if(ing.grams == null) right = '<span class="nd-miss">重さが不明のため計算に含まれていません</span>';
+      else right = '<span class="nd-miss">成分表に該当なし(計算に含まれていません)</span>';
+      return `<li><span class="nd-name">${left}</span><span class="nd-arrow">→</span><span class="nd-food">${right}</span></li>`;
+    }).join('');
+    const all = NUTRIENT_METRICS.filter(m => d.nutrition[m.id] != null)
+      .map(m => m.label + ' ' + d.nutrition[m.id] + m.unit).join(' ・ ');
+    return `
+      <details class="nutrition-detail">
+        <summary>栄養の計算内訳</summary>
+        <p class="nd-total">${all}</p>
+        <ul>${rows}</ul>
+        <p class="nd-note">日本食品標準成分表(八訂)増補2023年の「可食部100gあたり」の値から計算。調理による水分・油の増減は考慮していません。</p>
+      </details>`;
+  }
+
+  function renderCreatedCombo(dishes, nutritionOk){
+    // このバッチで実際に値が入っている指標だけをバッジ・表示対象にする(選択しなかった指標は表示しない)
+    const shown = NUTRIENT_METRICS.filter(m => dishes.some(d => d[m.id] != null));
     createResultEl.hidden = false;
     createResultEl.innerHTML = `
       <div class="recipe-card">
         <p class="recipe-tag">入力した内容からAIが作成</p>
         <div class="badges">
           ${shown.map(m => {
-            const total = dishes.reduce((s, d) => s + (d[m.id] || 0), 0);
-            return `<span class="badge ${m.id}">${m.label}(合計) ${formatMetric(m, total)}${m.unit}</span>`;
+            const total = roundNutrient(dishes.reduce((s, d) => s + (d[m.id] || 0), 0));
+            return `<span class="badge ${m.id}">${m.label}(合計) ${total}${m.unit}</span>`;
           }).join('')}
         </div>
         ${dishes.map((d, i) => `
@@ -300,8 +197,8 @@
               <h2>${dishes.length > 1 ? (i + 1) + '. ' : ''}${escapeHtml(d.name)}</h2>
               <span class="dish-type-tag">${escapeHtml(d.type)}</span>
             </div>
-            <p class="dish-macro">${shown.map(m => m.label + ' ' + formatMetric(m, d[m.id] || 0) + m.unit).join(' ・ ')}</p>
-            ${d.nutritionNote ? `<p class="dish-nutrition-note">※${escapeHtml(d.nutritionNote)}</p>` : ''}
+            <p class="dish-macro">${shown.filter(m => d[m.id] != null).map(m => m.label + ' ' + d[m.id] + m.unit).join(' ・ ')}</p>
+            ${renderNutritionWarn(d)}
             <button class="save-btn${isSaved(d.id) ? ' saved' : ''}" data-id="${d.id}">${isSaved(d.id) ? '★ 保存済み' : '☆ 保存する'}</button>
             <div class="ingredients">
               <h3>材料</h3>
@@ -311,10 +208,14 @@
               <h3>作り方</h3>
               <ol>${d.steps.map(x => '<li>' + escapeHtml(x) + '</li>').join('')}</ol>
             </div>
+            ${renderNutritionDetail(d)}
           </div>
         `).join('')}
       </div>
     `;
+    createNoteEl.textContent = nutritionOk
+      ? '※栄養量は、AIが示した食材と重さをもとに、日本食品標準成分表(八訂)増補2023年から計算した値です。体調や好みに合わせて調整してください。'
+      : '※栄養量を計算できませんでした(成分表のデータが準備できていない可能性があります)。管理者に連絡してください。';
     createNoteEl.hidden = false;
     createResultEl.scrollIntoView({behavior:'smooth', block:'nearest'});
   }
@@ -334,7 +235,6 @@
     setCreateLoading(true);
     createResultEl.hidden = true;
     createNoteEl.hidden = true;
-    const progress = createProgress(getCreateCount());
     try {
       const target = getCreateTarget();
       const activeMetrics = getActiveMetrics();
@@ -350,26 +250,19 @@
           targets: targets
         })
       });
-      const contentType = response.headers.get('Content-Type') || '';
-      let items = null;
-      if(response.ok && contentType.includes('ndjson') && response.body){
-        // 生成中の内容を少しずつ受け取りながら進み具合を表示する
-        const streamed = await readRecipeStream(response, progress);
-        items = Array.isArray(streamed) ? streamed : null;
-      } else {
-        const data = await response.json().catch(() => ({}));
-        if(!response.ok){
-          // ログインの期限切れなら状態を更新し、サーバーが返した日本語メッセージ(上限到達など)をそのまま表示する
-          if(response.status === 401) checkSession();
-          const apiErr = new Error('API request failed: ' + response.status);
-          apiErr.userMessage = data.error;
-          throw apiErr;
-        }
-        items = Array.isArray(data.dishes) ? data.dishes : null;
+      const data = await response.json().catch(() => ({}));
+      if(!response.ok){
+        // ログインの期限切れなら状態を更新し、サーバーが返した日本語メッセージ(上限到達など)をそのまま表示する
+        if(response.status === 401) checkSession();
+        const apiErr = new Error('API request failed: ' + response.status);
+        apiErr.userMessage = data.error;
+        throw apiErr;
       }
+      const items = Array.isArray(data.dishes) ? data.dishes : null;
       if(!items || !items.length){
         throw new Error('Unexpected response shape');
       }
+      const nutritionOk = data.nutritionOk !== false;
       const batchId = Date.now();
       const dishes = items.map((parsedItem, idx) => {
         if(!parsedItem.name || !Array.isArray(parsedItem.ingredients) || !Array.isArray(parsedItem.steps)){
@@ -385,24 +278,26 @@
           ingredients: parsedItem.ingredients,
           steps: parsedItem.steps
         };
-        // 選択していた指標だけ、AIの返答から数値を拾って記録する(選ばなかった指標は保存しない)
-        // 選択していた指標はすべて記録する(サーバーが成分表から計算して丸めた値をそのまま使う)
-        activeMetrics.forEach(m => {
-          const v = Number(parsedItem[m.id]);
-          recipe[m.id] = Number.isFinite(v) ? v : 0;
-        });
-        if(typeof parsedItem.nutritionNote === 'string' && parsedItem.nutritionNote){
-          recipe.nutritionNote = parsedItem.nutritionNote;
+        // サーバーが成分表から計算した値を記録する。
+        //   選択していた指標は従来どおり recipe[指標ID] に(保存済みレシピの表示でも使う)
+        //   全指標・照合の内訳は nutrition / ingredientDetails / nutritionCheck に
+        if(nutritionOk){
+          activeMetrics.forEach(m => {
+            if(parsedItem[m.id] != null){
+              recipe[m.id] = roundNutrient(Number(parsedItem[m.id]) || 0);
+            }
+          });
+          recipe.nutrition = parsedItem.nutrition;
+          recipe.nutritionCheck = parsedItem.nutritionCheck;
+          recipe.ingredientDetails = parsedItem.ingredientDetails;
         }
         recipes.push(recipe);
         return recipe;
       });
-      progress.finish();
-      renderCreatedCombo(dishes, activeMetrics);
+      renderCreatedCombo(dishes, nutritionOk);
     } catch(err){
       showCreateError(err.userMessage || 'レシピの作成に失敗しました。もう一度お試しください。');
     } finally {
-      progress.stop();
       setCreateLoading(false);
     }
   }
