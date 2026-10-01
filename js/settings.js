@@ -1,8 +1,9 @@
-// ==== 「設定」タブ:外部AI(Grok)の管理(管理者専用) ====
-// 管理者としてログインしているときだけ表示されます(auth.js の renderAuthUI から onAuthChanged() が呼ばれます)。
+// ==== 「設定」タブ:使わない食材の登録(ログイン中の全員)/ 外部AI(Grok)の管理(管理者専用) ====
+// 「使わない食材」はログインしているとき、外部AIの管理欄は管理者としてログインしているときだけ表示されます
+// (どちらも auth.js の renderAuthUI から onAuthChanged() が呼ばれます)。
 // APIキー・モデル・1日の上限はサーバー(/api/admin/ai-settings など)に保存され、この端末には保存しません。
 // 表示・非表示はあくまで見た目の制御で、実際の権限チェックはすべてサーバー側で行われます。
-// auth.js の isAdmin()、error-log.js の logError/renderLogControls(管理者向けエラーログ)に依存します。
+// auth.js の isLoggedIn()/isAdmin()、error-log.js の logError/renderLogControls(管理者向けエラーログ)に依存します。
 // (error-log.js が無い環境でも動くよう、記録の呼び出しは recordAdminError 経由にしています)
 
   // 以前のバージョンでこの端末のlocalStorageに保存していたキー(移行後に削除します)
@@ -227,9 +228,309 @@
     }
   }
 
-  // ログイン状態が変わるたびに auth.js から呼ばれる。管理者のときだけ設定欄を表示する。
+  // ==== 使わない食材の登録(ログイン中の全員。ユーザーごとにサーバーへ保存) ====
+  // 苦手・避けたい食材を登録しておくと、レシピを作るたびに自動でAIの条件に加わります(検索のたびに入力する必要はありません)。
+  //   ・登録内容はサーバー(GET/PUT /api/user/excluded-foods)に保存され、ログインしていれば別の端末でも同じ内容になります
+  //   ・追加・削除のたびに自動で保存します(「保存」ボタンはありません)
+  //   ・レシピ作成のときにブラウザから送る必要はなく、サーバーが本人の登録を読んで使います(functions/_lib/recipe-job.js の startJob)
+  //   ・この画面の操作では、AIは呼ばれません(=費用は発生しません)
+  // 設定欄(HTML)・スタイル・「作る」タブのお知らせは、index.html / style.css を増やさず、ここで作ります
+  // (create-ai.js の進捗バーと同じ方針)。作れなくても、レシピ作成や管理者向けの機能は止めません。
+  const EXCLUDED_URL = '/api/user/excluded-foods';
+
+  const EXCLUDED_CSS =
+    '#excluded-section .view-title{margin-top:28px;}' +
+    '.excluded-add{display:flex; gap:8px; align-items:stretch;}' +
+    '.excluded-add input{flex:1; min-width:0;}' +
+    '.excluded-add .btn{flex:0 0 auto; min-height:48px;}' +
+    '.excluded-list{list-style:none; margin:16px 0 0; padding:0; display:flex; flex-wrap:wrap; gap:8px;}' +
+    '.excluded-empty{font-size:13px; color:var(--ink-faint); padding:2px 2px 0;}' +
+    '.excluded-chip{display:inline-flex; align-items:center; max-width:100%; padding:2px 3px 2px 14px; border-radius:100px;' +
+      ' background:var(--accent-soft); border:1.5px solid rgba(217,100,63,.28); color:var(--ink); font-size:14px; font-weight:700; line-height:1.4;}' +
+    '.excluded-chip span{min-width:0; overflow-wrap:anywhere;}' +
+    '.excluded-remove{flex:0 0 auto; width:38px; height:38px; margin-left:2px; display:grid; place-items:center; border:none; border-radius:50%;' +
+      ' background:transparent; color:var(--accent); cursor:pointer;}' +
+    '.excluded-remove svg{width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:2.4; stroke-linecap:round;}' +
+    '.excluded-remove:active{background:rgba(217,100,63,.16);}' +
+    '#excluded-section .stat-line{font-weight:500; color:var(--ink-soft); font-size:12.5px;}' +
+    '#excluded-section .status-line{text-align:left;}' +
+    '.excluded-note{margin-top:14px;}' +
+    '.excluded-hint{margin-top:12px;}' +
+    '.link-btn{display:inline; margin-left:4px; padding:4px 2px; border:none; background:none; color:var(--brand); font:inherit; font-weight:700; text-decoration:underline; cursor:pointer;}';
+
+  const EXCLUDED_HTML =
+    '<h2 class="view-title">レシピの設定</h2>' +
+    '<section class="panel">' +
+      '<div class="panel-head"><h3>使わない食材</h3></div>' +
+      '<p class="input-hint">苦手な食材や避けたい食材を登録しておくと、レシピを作るたびに自動で除外されます。検索のたびに入力する必要はありません。</p>' +
+      '<div class="field">' +
+        '<label for="excluded-input">食材を追加</label>' +
+        '<div class="excluded-add">' +
+          '<input type="text" id="excluded-input" placeholder="例: パクチー なす" autocomplete="off" autocapitalize="none" enterkeyhint="done">' +
+          '<button type="button" class="btn btn-secondary btn-small" id="btn-excluded-add">追加</button>' +
+        '</div>' +
+        '<p class="input-hint">スペースや「、」で区切ると、まとめて追加できます。「豚肉」のように大きな分類でも登録できます。</p>' +
+      '</div>' +
+      '<ul class="excluded-list" id="excluded-list" aria-label="使わない食材の一覧"></ul>' +
+      '<p class="stat-line" id="excluded-count"></p>' +
+      '<p id="excluded-status" class="status-line" hidden></p>' +
+      '<p class="input-hint excluded-note">追加・削除すると自動で保存されます。AIが指示を守れないことも稀にあるため、アレルギーなど重要な場合は、材料もご自身で確認してください。</p>' +
+    '</section>';
+
+  let excludedSectionEl = null;
+  let excludedInputEl = null;
+  let excludedListEl = null;
+  let excludedCountEl = null;
+  let excludedStatusEl = null;
+  let createExcludedHintEl = null;
+
+  let excludedFoods = [];                                 // いま画面に出している登録内容
+  let excludedLimits = { max: 30, maxLength: 20 };        // サーバーの上限(読み込み時に更新される)
+  let excludedSaving = false;                             // 保存の通信の最中か
+  let excludedDirty = false;                              // 保存の最中にさらに変更されたか(終わったらもう一度保存する)
+
+  function showExcludedStatus(msg, isError){
+    if(!excludedStatusEl) return;
+    excludedStatusEl.textContent = msg;
+    excludedStatusEl.hidden = !msg;
+    excludedStatusEl.style.color = isError ? 'var(--protein)' : 'var(--veg)';
+  }
+
+  function recordExcludedError(err, extra){
+    if(typeof logError === 'function') logError('excluded-foods', err, extra);
+  }
+
+  // 重複の判定用に、表記ゆれをならす(サーバーの matchKey と同じ考え方: 全角半角・大文字小文字・カタカナ→ひらがな・空白)
+  function excludedKey(text){
+    return String(text).normalize('NFKC').toLowerCase()
+      .replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60))
+      .replace(/\s+/g, '');
+  }
+
+  // 入力欄の文字を、食材ごとに分ける(スペース・「、」・カンマ区切りでまとめて追加できる)
+  function splitExcludedInput(text){
+    return String(text).split(/[\s\u3001,\uff0c;\uff1b]+/).map(s => s.trim()).filter(Boolean);
+  }
+
+  function renderExcluded(){
+    if(!excludedListEl) return;
+    excludedListEl.textContent = '';
+    if(!excludedFoods.length){
+      const empty = document.createElement('li');
+      empty.className = 'excluded-empty';
+      empty.textContent = 'まだ登録がありません';
+      excludedListEl.appendChild(empty);
+    }
+    excludedFoods.forEach(name => {
+      const li = document.createElement('li');
+      li.className = 'excluded-chip';
+      const label = document.createElement('span');
+      label.textContent = name;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'excluded-remove';
+      btn.dataset.name = name;
+      btn.setAttribute('aria-label', '「' + name + '」を使わない食材から外す');
+      btn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>';
+      li.appendChild(label);
+      li.appendChild(btn);
+      excludedListEl.appendChild(li);
+    });
+    if(excludedCountEl) excludedCountEl.textContent = '登録済み: ' + excludedFoods.length + ' / ' + excludedLimits.max + ' 件';
+    renderCreateExcludedHint();
+  }
+
+  // 「作る」タブのお知らせ。登録があるときだけ、何件が自動で除外されるかを知らせる
+  function renderCreateExcludedHint(){
+    if(!createExcludedHintEl) return;
+    createExcludedHintEl.textContent = '';
+    if(!isLoggedIn() || !excludedFoods.length){
+      createExcludedHintEl.hidden = true;
+      return;
+    }
+    const shown = excludedFoods.slice(0, 5).join('、') + (excludedFoods.length > 5 ? ' ほか' : '');
+    createExcludedHintEl.appendChild(document.createTextNode('使わない食材 ' + excludedFoods.length + '件(' + shown + ')は、自動で除外されます。'));
+    const link = document.createElement('button');
+    link.type = 'button';
+    link.className = 'link-btn';
+    link.dataset.goto = 'settings';
+    link.textContent = '変更する';
+    createExcludedHintEl.appendChild(link);
+    createExcludedHintEl.hidden = false;
+  }
+
+  // 失敗時はサーバーが返した日本語メッセージで例外にする(エラーログにも残す)
+  async function excludedFetch(options){
+    const method = (options && options.method) || 'GET';
+    let res;
+    try {
+      res = await fetch(EXCLUDED_URL, options);
+    } catch(e){
+      recordExcludedError(e, { method: method });
+      throw new Error('通信に失敗しました。電波の良い場所でもう一度お試しください。');
+    }
+    let data = {};
+    try { data = await res.json(); } catch(e){ /* 空のレスポンス */ }
+    if(!data || typeof data !== 'object') data = {};
+    if(!res.ok){
+      const err = new Error(data.error || '通信に失敗しました(' + res.status + ')');
+      recordExcludedError(err, { method: method, status: res.status, serverError: data.error });
+      throw err;
+    }
+    return data;
+  }
+
+  function applyExcludedData(data){
+    if(Array.isArray(data.foods)) excludedFoods = data.foods.filter(x => typeof x === 'string');
+    if(data.max) excludedLimits = { max: data.max, maxLength: data.maxLength || excludedLimits.maxLength };
+    renderExcluded();
+  }
+
+  async function loadExcluded(){
+    if(excludedSaving) return; // 保存の最中は、古い内容で上書きしない
+    try {
+      applyExcludedData(await excludedFetch());
+    } catch(err){
+      showExcludedStatus(err.message, true);
+    }
+  }
+
+  // 保存(一覧をまるごと置き換え)。保存の最中にさらに変更されたら、終わったあとにもう一度保存する。
+  async function saveExcluded(){
+    if(excludedSaving){ excludedDirty = true; return; }
+    excludedSaving = true;
+    showExcludedStatus('保存しています…', false);
+    try {
+      do {
+        excludedDirty = false;
+        const data = await excludedFetch({
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ foods: excludedFoods }),
+        });
+        if(!excludedDirty) applyExcludedData(data); // サーバーが整えた内容(空白除去など)に合わせる
+      } while(excludedDirty);
+      showExcludedStatus('保存しました。次のレシピ作成から自動で除外されます。', false);
+    } catch(err){
+      excludedDirty = false;
+      excludedSaving = false;
+      showExcludedStatus(err.message, true); // サーバーのメッセージは「保存できませんでした。…」と、そのまま読める文になっている
+      await loadExcluded(); // サーバーに保存されている内容に戻す
+      return;
+    }
+    excludedSaving = false;
+  }
+
+  function addExcludedFromInput(){
+    const tokens = splitExcludedInput(excludedInputEl.value);
+    if(!tokens.length) return;
+    const keys = new Set(excludedFoods.map(excludedKey));
+    const added = [];
+    let duplicated = 0;
+    for(const name of tokens){
+      if(name.length > excludedLimits.maxLength){
+        showExcludedStatus('「' + name.slice(0, 8) + '…」は長すぎます(1件' + excludedLimits.maxLength + '文字までです)。', true);
+        return;
+      }
+      const key = excludedKey(name);
+      if(keys.has(key)){ duplicated++; continue; }
+      keys.add(key);
+      added.push(name);
+    }
+    if(excludedFoods.length + added.length > excludedLimits.max){
+      showExcludedStatus('登録できるのは' + excludedLimits.max + '件までです。不要なものを外してから追加してください。', true);
+      return;
+    }
+    excludedInputEl.value = '';
+    if(!added.length){
+      showExcludedStatus(duplicated ? 'すでに登録されています。' : '', false);
+      return;
+    }
+    excludedFoods = excludedFoods.concat(added);
+    renderExcluded();
+    saveExcluded();
+  }
+
+  function removeExcluded(name){
+    const next = excludedFoods.filter(x => x !== name);
+    if(next.length === excludedFoods.length) return;
+    excludedFoods = next;
+    renderExcluded();
+    saveExcluded();
+  }
+
+  // 設定欄・スタイル・「作る」タブのお知らせを作って、操作を結びつける(最初に1回)
+  function initExcludedFoods(){
+    try {
+      if(typeof document.createElement !== 'function' || !document.head) return; // 画面部品が使えない環境では何もしない
+      const view = document.getElementById('view-settings');
+      if(!view || !adminSectionEl) return;
+
+      const style = document.createElement('style');
+      style.id = 'excluded-style';
+      style.textContent = EXCLUDED_CSS;
+      document.head.appendChild(style);
+
+      excludedSectionEl = document.createElement('div');
+      excludedSectionEl.id = 'excluded-section';
+      excludedSectionEl.hidden = true;
+      excludedSectionEl.innerHTML = EXCLUDED_HTML;
+      view.insertBefore(excludedSectionEl, adminSectionEl); // アカウントの下・管理者設定の上
+
+      excludedInputEl = document.getElementById('excluded-input');
+      excludedListEl = document.getElementById('excluded-list');
+      excludedCountEl = document.getElementById('excluded-count');
+      excludedStatusEl = document.getElementById('excluded-status');
+
+      // 「作る」タブ: 雰囲気・ジャンル欄の下に、登録件数のお知らせ(登録があるときだけ表示)
+      const moodEl = document.getElementById('create-mood');
+      const moodField = moodEl && moodEl.closest ? moodEl.closest('.field') : null;
+      if(moodField && moodField.parentNode){
+        createExcludedHintEl = document.createElement('p');
+        createExcludedHintEl.className = 'input-hint excluded-hint';
+        createExcludedHintEl.id = 'create-excluded-hint';
+        createExcludedHintEl.hidden = true;
+        moodField.parentNode.insertBefore(createExcludedHintEl, moodField.nextSibling);
+      }
+
+      document.getElementById('btn-excluded-add').addEventListener('click', addExcludedFromInput);
+      excludedInputEl.addEventListener('keydown', (e) => {
+        // 日本語入力の変換を確定するEnterでは追加しない
+        if(e.key === 'Enter' && !e.isComposing && e.keyCode !== 229){
+          e.preventDefault();
+          addExcludedFromInput();
+        }
+      });
+      excludedListEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('.excluded-remove');
+        if(btn) removeExcluded(btn.dataset.name);
+      });
+      renderExcluded();
+    } catch(err){
+      excludedSectionEl = null; // 作れなかったときは、この機能だけ使わない(ほかの機能は止めない)
+      recordExcludedError(err, { step: 'init' });
+    }
+  }
+
+  // ログイン状態が変わるたびに onAuthChanged から呼ばれる。ログイン中だけ設定欄を表示し、登録内容を読み込む
+  function onExcludedFoodsAuthChanged(){
+    if(!excludedSectionEl) return;
+    const loggedIn = isLoggedIn();
+    excludedSectionEl.hidden = !loggedIn;
+    if(loggedIn){
+      loadExcluded();
+    } else {
+      excludedFoods = [];
+      excludedInputEl.value = '';
+      showExcludedStatus('', false);
+      renderExcluded();
+    }
+  }
+
+  // ログイン状態が変わるたびに auth.js から呼ばれる。ログイン中は「使わない食材」を、管理者のときだけ管理者用の設定欄を表示する。
   function onAuthChanged(){
     refreshLogControls();
+    onExcludedFoodsAuthChanged();
     if(isAdmin()){
       adminSectionEl.hidden = false;
       loadAdminSettings();
@@ -246,4 +547,5 @@
   grokSaveBtn.addEventListener('click', saveAdminSettings);
   foodsImportBtn.addEventListener('click', importFoods);
 
+  initExcludedFoods();
   onAuthChanged();

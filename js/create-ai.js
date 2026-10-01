@@ -6,6 +6,8 @@
 // AIの呼び出しはサーバーが行います。ブラウザには食材・雰囲気・品数・栄養目標だけを送り、
 // APIキー・モデル・プロンプトはサーバー側(管理者が設定)で扱うため、この画面には一切現れません。
 // AIが使えるのはログイン中のユーザーだけで、アプリ全体の1日の利用回数に上限があります。
+// 「使わない食材」は設定タブ(excluded-foods.js)で登録します。ブラウザからは送らず、サーバーが本人の登録を読んで自動で除外します。
+// 除外したはずの食材が結果に残ってしまった場合は、サーバーが excludedHits で知らせ、結果の上に注意を表示します。
 //
 // 作成は「ジョブ」としてサーバーで進みます(functions/_lib/recipe-job.js)。
 //   1. POST /api/ai/create-recipe   … ジョブを作るだけ(AIは呼ばれない)。jobId を受け取り、この端末に控える
@@ -310,6 +312,12 @@
       items.join('、') + '。食材や目標値を少し変えて、もう一度作成してみてください。</p>';
   }
 
+  // 設定タブで「使わない食材」に登録したのに、AIが材料に入れてしまった場合の注意(サーバーが何度か作り直させても残ったときだけ届く)
+  function renderExcludedWarn(hits){
+    if(!Array.isArray(hits) || !hits.length) return '';
+    return '<p class="nutrition-warn">「使わない食材」に登録している「' + hits.map(escapeHtml).join('」「') + '」が、材料に含まれている可能性があります。材料をご確認のうえ、もう一度作成してみてください。</p>';
+  }
+
   // 成分表と照合できなかった食材・値がなかった食材があれば、栄養量の下に知らせる
   function renderNutritionWarn(d){
     const c = d.nutritionCheck;
@@ -348,7 +356,7 @@
       </details>`;
   }
 
-  function renderCreatedCombo(dishes, nutritionOk, targetCheck){
+  function renderCreatedCombo(dishes, nutritionOk, targetCheck, excludedHits){
     // このバッチで実際に値が入っている指標だけをバッジ・表示対象にする(選択しなかった指標は表示しない)
     const shown = NUTRIENT_METRICS.filter(m => dishes.some(d => d[m.id] != null));
     const offIds = new Set(((targetCheck && targetCheck.results) || []).filter(r => !r.ok).map(r => r.id));
@@ -362,6 +370,7 @@
             return `<span class="badge ${m.id}${offIds.has(m.id) ? ' off' : ''}"><span class="badge-label">${m.label}</span><span class="badge-val">${total}<small>${m.unit}</small></span></span>`;
           }).join('')}
         </div>` : ''}
+        ${renderExcludedWarn(excludedHits)}
         ${nutritionOk ? renderTargetCheck(targetCheck) : ''}
         ${dishes.map((d, i) => `
           <div class="dish-block">
@@ -498,7 +507,7 @@
       recipes.push(recipe);
       return recipe;
     });
-    renderCreatedCombo(dishes, nutritionOk, data.targetCheck);
+    renderCreatedCombo(dishes, nutritionOk, data.targetCheck, data.excludedHits);
   }
 
   // 終了処理(成功・失敗どちらでも)。ジョブの控えを消し、待機表示を閉じる
