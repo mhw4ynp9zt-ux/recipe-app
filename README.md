@@ -1,83 +1,115 @@
-# レシピアプリ パスキーログイン実装
- 
+# レシピアプリ(パスキー認証・サーバー保存・管理者AI設定)
+
 ## 何が入っているか
 
 ```
-db/schema.sql                    D1のテーブル定義
-wrangler.toml                    Cloudflare Pages/D1の設定
-package.json                     依存パッケージ(@simplewebauthn/server)
-functions/api/auth/
-  register-options.js            新規登録: パスキー作成オプションを発行
-  register-verify.js             新規登録: 検証してユーザー作成・ログイン
-  login-options.js                ログイン: 認証オプションを発行(ユーザー名不要)
-  login-verify.js                 ログイン: 検証してセッション作成
-  logout.js                       ログアウト
-  me.js                            ログイン中かどうかの確認
-functions/api/recipes.js          レシピ一覧取得・保存
-functions/api/recipes/[id].js     レシピ削除
-functions/_lib/session.js         Cookie・セッション・チャレンジの共通処理
-js/save.js                        既存save.jsの置き換え(ログイン中はサーバー、未ログインはlocalStorage)
-js/auth.js                        新規追加。ログイン/登録UIとセッション管理
-index.html                        account-box用のHTMLと<script>タグを追加した版
+index.html                       画面(設定タブにアカウント欄と管理者用のAI設定欄)
+package.json                     依存パッケージ(wrangler、@simplewebauthn/server)
+wrangler.toml                    Cloudflare Pages/D1の設定(RP_ID・RP_NAME・ORIGIN)
+css/style.css                    スタイル
+db/schema.sql                    D1のテーブル定義(初回)
+db/migration-002-ai-settings.sql AI設定用テーブルの追加分(app_settings、ai_usage_daily)
+db/migration-003-foods.sql       日本食品標準成分表のテーブル定義(foods、food_groups、nutrient_defs)
+db/seed-foods.sql                成分表のデータ(2,538食品。scripts/build_foods_sql.py が文科省のExcelから生成)
+scripts/build_foods_sql.py       成分表のExcel → 上の2つのSQLを作るスクリプト
+js/
+  config.js                      栄養指標の定義(NUTRIENT_METRICS)
+  utils.js                       共通関数
+  save.js                        保存済みレシピの読み書き(ログイン中はサーバー、未ログインはlocalStorage)
+  auth.js                        パスキーの登録・ログイン・ログアウトと、ログイン状態の管理
+  settings.js                    管理者用のAI設定欄(管理者のときだけ表示)
+  tabs.js                        タブ切り替え
+  create-ai.js                   「作る」タブ。条件をサーバーへ送ってAIレシピを表示
+  main.js                        初期化
+functions/_lib/
+  session.js                     Cookie・セッション・チャレンジ・管理者判定・Origin確認
+  crypto.js                      APIキーの暗号化・復号(AES-GCM)
+  app-settings.js                AI設定の読み書き、1日の利用回数の確保・払い戻し
+  recipe-prompt.js               リクエスト検証・プロンプト組み立て・AI返答の検証
+  nutrition.js                   AIが返した食材を成分表に照合し、栄養量を計算
+functions/api/auth/              認証API 6本(register-options / register-verify / login-options / login-verify / logout / me)
+functions/api/recipes.js         レシピ一覧取得・保存
+functions/api/recipes/[id].js    レシピ削除
+functions/api/admin/             管理者専用API(ai-settings.js、ai-test.js)
+functions/api/ai/create-recipe.js  ログインユーザー向けAIレシピ作成
 ```
 
-`render-result.js` と `create-ai.js` は変更不要です(`isSaved`/`toggleSave` の呼び出し方が変わらないため)。
+## 仕様の要点
 
-## 手順
+- **認証**: パスキー(WebAuthn)のみ。ユーザー名の入力はなく、1ユーザー1パスキー。ログイン中は新規登録できない。
+- **管理者**: Secret `ADMIN_USER_ID` に指定したユーザーIDの1人だけ。未設定なら誰も管理者にならない。
+- **AI設定**: APIキー・モデル・1日の上限は管理者だけが設定できる。APIキーはAES-GCMで暗号化してD1に保存し、ブラウザには返さない。
+- **AIの利用**: ログインユーザーのみ。呼び出しはサーバーが行い、プロンプトもサーバーで組み立てる。アプリ全体で1日の利用回数に上限がある(初期値50回、日本時間で毎日リセット)。失敗した回は回数に数えない。
 
-### 1. 既存プロジェクトへの反映
-- `js/save.js` を今回のファイルで **上書き**
-- `js/auth.js` を追加
-- `index.html` を今回の版で置き換え(またはdiffを見て2箇所だけ手動反映)
-- `functions/`, `db/`, `wrangler.toml`, `package.json` をプロジェクトのルートに配置
+## 設定手順
 
-### 2. 依存インストール
-```
-npm install
-```
-
-### 3. Cloudflareにログイン・D1データベース作成
-```
-npx wrangler login
-npx wrangler d1 create recipe-app-db
-```
-表示された `database_id` を `wrangler.toml` の `database_id` に貼り付けてください。
-
-### 4. スキーマ適用
+### 1. テーブルを用意する
+初回は `db/schema.sql`、AI設定を追加するときは `db/migration-002-ai-settings.sql` を適用します。
 ```
 npx wrangler d1 execute recipe-app-db --file=./db/schema.sql --remote
+npx wrangler d1 execute recipe-app-db --file=./db/migration-002-ai-settings.sql --remote
 ```
 
-### 5. RP設定を自分のドメインに変更
-`wrangler.toml` の `[vars]` を、実際にデプロイするPagesのURLに合わせて書き換えます。
+### 1-2. 成分表のデータを入れる(栄養計算に必要)
+AIが返したレシピの栄養量は、日本食品標準成分表(八訂)増補2023年をD1に入れたデータから計算します。**このデータが無いと、栄養量が表示されません**(レシピ自体は表示されます)。
 ```
-RP_ID = "recipe-app-xxxx.pages.dev"
-RP_NAME = "今日のレシピ回し"
-ORIGIN = "https://recipe-app-xxxx.pages.dev"
+npx wrangler d1 execute recipe-app-db --file=./db/migration-003-foods.sql --remote
+npx wrangler d1 execute recipe-app-db --file=./db/seed-foods.sql --remote
+npx wrangler d1 execute recipe-app-db --remote --command "SELECT COUNT(*) FROM foods"   # 2538 と出ればOK
 ```
-独自ドメインを使う場合はそのドメインを指定してください。**RP_IDは登録時と一致していないとパスキーが機能しません**(サブドメインが変わっただけでも別物として扱われます)。
+`seed-foods.sql` は何度流しても同じ結果になります(成分表が改訂されたら、新しいExcelで `python3 scripts/build_foods_sql.py 食品データ.xlsx` を実行して作り直し、流し直します。反映までに最大10分かかります)。
+仕組みと前提は `NUTRITION.md` を参照してください。
 
-### 6. デプロイ
+### 2. Secretを2つ設定する(デプロイより前に)
+Cloudflareのダッシュボード(Workers & Pages → 対象プロジェクト → Settings → Variables and Secrets)で、Type を Secret にして追加します。
+
+| 名前 | 値 |
+|---|---|
+| `SETTINGS_ENC_KEY` | 長いランダムな文字列(`openssl rand -base64 32` など)。APIキーの暗号鍵。変更すると保存済みのキーを復号できなくなる |
+| `ADMIN_USER_ID` | 自分の `users.id`(下記のSQLで調べる) |
+
 ```
+npx wrangler d1 execute recipe-app-db --remote --command "SELECT id, username, display_name FROM users"
+```
+Secretの追加・変更は次回のデプロイから反映されます。
+
+### 3. デプロイ
+GitHubの `main` にpushすると自動でデプロイされます。手動の場合は次のとおりです。
+```
+npm install
 npx wrangler pages deploy .
 ```
-初回はPagesプロジェクト名の入力を求められます。デプロイ後に発行されたURLが `wrangler.toml` の値と一致しているか確認してください(一致していない場合は書き換えて再デプロイ)。
 
-### 7. 動作確認
-1. アプリを開き、「設定」タブの「アカウント」欄でユーザー名を入力して「この端末のパスキーで新規登録」
-2. 端末の指示(Face ID/Touch ID/画面ロックなど)に従って登録
-3. 「作る」タブでレシピを作成し、保存する
-4. 別のブラウザ/シークレットウィンドウから同じURLを開き、「パスキーでログイン」で同じレシピが見えることを確認
+### 4. 動作確認
+1. 自分のパスキーでログインし、「設定」タブに「AI設定(管理者のみ)」が出ることを確認
+2. APIキーを入力して「接続テスト・モデルを取得」→ モデルを選択 →「設定を保存」
+3. 別のブラウザやシークレットウィンドウで新規登録し、「設定」タブにAI設定が**出ない**ことを確認
+4. そのユーザーで「作る」タブからレシピが作れることを確認
 
 ## 実装のポイント
 
-- **パスキーの検証はサーバー側でしかできない**ため、Cloudflare Pages Functions(Workers)でAPIを追加しています。
-- ログインは「ユーザー名なし」方式(resident key / discoverable credential)です。ユーザー名を入れるのは新規登録のときだけで、2回目以降は「パスキーでログイン」ボタンを押すだけで端末側が候補を出します。
-- チャレンジ(使い捨ての値)とログインセッションはどちらもCookie経由のトークンでD1のテーブルを参照する方式です。JWTのような自己完結トークンではなく、いつでもサーバー側で失効させられます。
-- 未ログイン時は今まで通りlocalStorageに保存されます。ログイン/新規登録した瞬間に、その端末に溜まっていた保存済みレシピをサーバー側のアカウントへ自動で引き継ぎます(`migrateLocalSavedToServer`)。
+- **権限チェックはすべてサーバー側**です。設定欄の表示切り替えは見た目だけで、管理者用APIは管理者以外に403を返します。
+- ログインは「ユーザー名なし」方式(resident key / discoverable credential)です。新規登録時の内部名(`recipe-` + 8桁の16進数)はサーバーが自動生成し、画面には出しません。
+- チャレンジとログインセッションは、Cookie経由のトークンでD1のテーブルを参照する方式です。サーバー側でいつでも失効できます。
+- 未ログイン時は保存済みレシピをlocalStorageに保存します。ログイン・新規登録した瞬間に、その端末の分をアカウントへ引き継ぎます(`migrateLocalSavedToServer`)。
+- 旧版が端末のlocalStorageに保存したGrokの設定(`recipeRouletteGrokSettingsV1`)は、管理者が設定欄を開いたときにサーバーへ移行し、端末側を削除します。
 
-## 今回のスコープ外(必要なら次にやると良いこと)
+## 運用上の注意
 
-- 設定タブのxAI APIキーは今もブラウザのlocalStorageに保存され、ブラウザから直接xAIへ送信されています。サーバー側にAPIキーを移して `/api/create-recipe` のようなエンドポイント経由で呼び出すようにすると、キーの漏洩リスクを下げられます。
-- パスキーを紛失した場合の復旧手段(別のパスキーを追加登録する画面など)は未実装です。
-- レート制限やCSRF対策など、公開運用する場合に追加で検討した方がよい項目があります。
+- **パスキーはドメイン(`RP_ID`)に紐づきます。** 独自ドメインへ移すと全員のパスキーが使えなくなるため、移す予定があるなら利用者を増やす前に行ってください。
+- **パスキーを失くしたときの復旧手段はありません。** 管理者本人の場合は、新しく登録してから `ADMIN_USER_ID` を新しいIDに差し替え、必要なら次のSQLで保存済みレシピを付け替えます。
+  ```
+  npx wrangler d1 execute recipe-app-db --remote --command "UPDATE recipes SET user_id='新しいID' WHERE user_id='古いID'"
+  ```
+- **新規登録は誰でもできます。** 1日の上限はアプリ全体で共通なので、知らない人に枠を使われる可能性があります。
+
+## 未実装・今後の課題
+
+詳しくは設計書を参照してください。主なものは次のとおりです。
+
+- 新規登録の受付の制御(停止・招待制)
+- ユーザーごとの利用制限、IPごとの登録制限
+- 認証APIのレート制限
+- 期限切れデータ(`challenges`・`sessions`)の掃除
+- 保存失敗の画面通知、端末内レシピの引き継ぎ失敗時の扱い
+- アカウント削除
