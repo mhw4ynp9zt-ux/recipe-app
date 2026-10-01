@@ -26,7 +26,7 @@ export async function onRequestPost({ request, env }) {
   }
 
   const username = generateUsername();
-  const displayName = env.RP_NAME || "今日のレシピ回し";
+  const displayName = env.RP_NAME || "コンダテ";
 
   const options = await generateRegistrationOptions({
     rpName: env.RP_NAME,
