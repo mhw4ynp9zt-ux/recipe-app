@@ -58,14 +58,25 @@
         <h2>食材とジャンル</h2>
         <span class="step-tag">どちらも任意</span>
       </div>
+      <!-- 入力欄は js/multi-field.js が「+ 追加」「×」で増減できる形に作ります。
+           #create-ingredients / #create-mood は create-ai.js が読む非表示の欄で、各入力欄の内容をつないだ文字列が入ります。 -->
       <div class="field">
-        <label for="create-ingredients">使いたい食材</label>
-        <input type="text" id="create-ingredients" placeholder="例: 鶏むね肉 キャベツ 卵" autocomplete="off" autocapitalize="none" enterkeyhint="next">
-        <p class="input-hint">スペース区切りで入力。空欄なら食材もおまかせで考えます。</p>
+        <label id="create-ingredients-label">使いたい食材</label>
+        <input type="hidden" id="create-ingredients" value="">
+        <div class="multi-list" id="create-ingredients-list" role="group" aria-labelledby="create-ingredients-label"></div>
+        <button type="button" class="add-row-btn" id="create-ingredients-add">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>食材を追加
+        </button>
+        <p class="input-hint">食材を1つずつ入力します(最大10個)。空欄なら食材もおまかせで考えます。</p>
       </div>
       <div class="field">
-        <label for="create-mood">雰囲気・ジャンル</label>
-        <input type="text" id="create-mood" placeholder="例: カレー、中華、鍋、さっぱり和風" autocomplete="off" autocapitalize="none" enterkeyhint="done">
+        <label id="create-mood-label">料理名・雰囲気・ジャンル</label>
+        <input type="hidden" id="create-mood" value="">
+        <div class="multi-list" id="create-mood-list" role="group" aria-labelledby="create-mood-label"></div>
+        <button type="button" class="add-row-btn" id="create-mood-add">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>条件を追加
+        </button>
+        <p class="input-hint">「親子丼」のような料理名でも、「中華」「さっぱり」のような雰囲気・ジャンルでもOK。入れた条件を組み合わせて考えます(最大5個)。</p>
       </div>
     </section>
 
@@ -205,6 +216,7 @@
 <script src="js/auth.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/tabs.js"></script>
+<script src="js/multi-field.js"></script>
 <script src="js/create-ai.js"></script>
 <script src="js/main.js"></script>
 </body>
