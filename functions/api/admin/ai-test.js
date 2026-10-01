@@ -3,9 +3,12 @@
 //   apiKey があればそのキーで、なければサーバーに保存済みのキーで xAI の /v1/models を呼びます。
 //   → { models: ["grok-...", ...] }
 // 呼び出しはサーバーから行うので、保存済みのキーがブラウザに渡ることはありません。
+// 失敗時は、画面の「ログをダウンロード」用に detail(xAIの応答本文・例外の内容)も返します。
+// この API は管理者専用で、detail からも APIキーは伏せ字にして返します。
 
 import { requireAdmin, json } from "../../_lib/session.js";
 import { loadAiSettings } from "../../_lib/app-settings.js";
+import { redact, clip } from "../../_lib/debug-trace.js";
 
 export async function onRequestPost({ request, env }) {
   const auth = await requireAdmin(env, request);
@@ -39,16 +42,27 @@ export async function onRequestPost({ request, env }) {
       const message = (res.status === 401 || res.status === 403)
         ? "APIキーが正しくないか、権限がありません"
         : `xAI APIがエラーを返しました(${res.status})`;
-      return json({ error: message }, { status: 502 });
+      let upstreamBody = "";
+      try { upstreamBody = await res.text(); } catch (e) { /* 本文が読めなくても status は返す */ }
+      return json({
+        error: message,
+        detail: { upstreamStatus: res.status, upstreamBody: clip(redact(upstreamBody, [apiKey]), 1000) },
+      }, { status: 502 });
     }
     const data = await res.json();
     const models = (data.data || []).map((m) => m.id).filter(Boolean).sort();
     if (!models.length) {
-      return json({ error: "利用できるモデルが見つかりませんでした" }, { status: 502 });
+      return json({
+        error: "利用できるモデルが見つかりませんでした",
+        detail: { upstreamStatus: res.status, upstreamBody: clip(redact(JSON.stringify(data), [apiKey]), 1000) },
+      }, { status: 502 });
     }
     return json({ models });
   } catch (e) {
-    return json({ error: "xAI APIに接続できませんでした。時間をおいて再度お試しください" }, { status: 502 });
+    return json({
+      error: "xAI APIに接続できませんでした。時間をおいて再度お試しください",
+      detail: { name: e && e.name, message: clip(redact(e && e.message, [apiKey]), 500) },
+    }, { status: 502 });
   } finally {
     clearTimeout(timer);
   }

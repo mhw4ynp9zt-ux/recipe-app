@@ -4,6 +4,7 @@
 
 import { requireAdmin, json } from "../../_lib/session.js";
 import { importFoodsChunk, countFoods } from "../../_lib/foods-import.js";
+import { redact, clip } from "../../_lib/debug-trace.js";
 
 export async function onRequestGet({ request, env }) {
   const auth = await requireAdmin(env, request);
@@ -28,6 +29,10 @@ export async function onRequestPost({ request, env }) {
     return json(result);
   } catch (e) {
     console.error("import-foods failed: " + (e && e.message));
-    return json({ error: "取り込みに失敗しました" }, { status: 500 });
+    // 管理者専用APIなので、画面の「ログをダウンロード」用に原因(detail)も返す
+    return json({
+      error: "取り込みに失敗しました",
+      detail: { name: e && e.name, message: clip(redact(e && e.message), 500) },
+    }, { status: 500 });
   }
 }

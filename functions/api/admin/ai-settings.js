@@ -4,6 +4,7 @@
 //   apiKey が空・未指定なら、保存済みのキーをそのまま維持します。
 
 import { requireAdmin, json } from "../../_lib/session.js";
+import { redact, clip } from "../../_lib/debug-trace.js";
 import {
   MAX_DAILY_LIMIT,
   loadAiSettings,
@@ -76,6 +77,15 @@ export async function onRequestPut({ request, env }) {
     return json({ error: "変更する内容がありません" }, { status: 400 });
   }
 
-  await saveAiSettings(env, updates);
+  try {
+    await saveAiSettings(env, updates);
+  } catch (e) {
+    // 暗号化の失敗・DBエラーなど。管理者専用APIなので、画面の「ログをダウンロード」用に原因(detail)も返す
+    console.error("saveAiSettings failed: " + (e && e.message));
+    return json({
+      error: "設定の保存に失敗しました",
+      detail: { name: e && e.name, message: clip(redact(e && e.message, [updates.apiKey]), 500) },
+    }, { status: 500 });
+  }
   return json({ ok: true });
 }
