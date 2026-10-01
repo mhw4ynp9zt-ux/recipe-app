@@ -3,6 +3,8 @@
 // isSaved/toggleSaveは今までどおり同期関数のまま使えるように、
 // savedCacheというメモリ上のキャッシュを介して読み書きします。
 // utils.js の withPieceCount、config.js の NUTRIENT_METRICS、auth.js の isLoggedIn に依存します。
+// 保存済み一覧の「栄養の計算内訳」は、create-ai.js の renderNutritionDetail/renderNutritionWarn を再利用して表示します
+// (「作る」タブの結果と同じ見た目。内訳は保存時にレシピ本体と一緒に保存されたデータを使います)。
 // サーバーへの保存・削除・取得の失敗は、error-log.js の logError で管理者向けエラーログに記録します
 // (画面の動きは変えません。従来どおり失敗しても画面上は何も出ません)。
 
@@ -121,19 +123,83 @@
     return String(str == null ? '' : str).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   }
 
-  // 一覧は「料理名・種類・栄養」だけを並べ、タップで材料と作り方を開く(新しく保存したものが上)
+  // ==== 保存済み一覧の検索(レシピ名・食材の部分一致) ====
+  // 全角/半角・大文字/小文字・ひらがな/カタカナの違いは区別せずに照合する
+  // (例: 「ニンジン」「にんじん」「人参」のうち、前の2つは互いにヒットする)。
+  function normalizeSearchText(str){
+    return String(str == null ? '' : str)
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[ァ-ヶ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+  }
+  // 入力をスペース(全角も可)で区切ったキーワードの配列にする。空なら絞り込まない
+  function parseSearchQuery(raw){
+    return normalizeSearchText(raw).split(/\s+/).filter(Boolean);
+  }
+  // 全てのキーワードが、レシピ名か材料のどれかに含まれていればヒット(キーワード同士はAND)
+  function recipeMatchesQuery(recipe, tokens){
+    if(!tokens.length) return true;
+    const targets = [recipe.name].concat(Array.isArray(recipe.ingredients) ? recipe.ingredients : []).map(normalizeSearchText);
+    return tokens.every(tok => targets.some(t => t.includes(tok)));
+  }
+
+  function setHiddenById(id, hidden){
+    const el = document.getElementById(id);
+    if(el) el.hidden = hidden;
+  }
+
+  // 保存済みレシピの栄養の計算内訳(「作る」タブと同じ表示)。
+  // 内訳(ingredientDetails/nutrition)が保存されていない古いレシピには、その旨を表示する。
+  // 注意: ページ読み込み中にcreate-ai.jsより先に呼ばれることがあるため、関数の有無を確認する
+  // (その場合は、main.jsの最後の再描画で表示される)
+  function renderSavedNutrition(d){
+    if(typeof renderNutritionDetail !== 'function') return '';
+    const detail = renderNutritionDetail(d);
+    if(!detail) return '<p class="saved-nutrition-none">このレシピには栄養の計算内訳が保存されていません。</p>';
+    return (typeof renderNutritionWarn === 'function' ? renderNutritionWarn(d) : '') + detail;
+  }
+
+  // 一覧は「料理名・種類・栄養」だけを並べ、タップで材料・作り方・栄養の計算内訳を開く(新しく保存したものが上)
+  // 検索欄に入力があれば、レシピ名・食材に一致するものだけを表示する。
   function renderSavedView(){
-    const list = savedCache;
+    const all = savedCache;
     const emptyEl = document.getElementById('saved-empty');
     const listEl = document.getElementById('saved-list');
-    if(!list.length){
+    const inputEl = document.getElementById('saved-search-input');
+    const countEl = document.getElementById('saved-search-count');
+    const noMatchEl = document.getElementById('saved-no-match');
+    const rawQuery = inputEl ? inputEl.value : '';
+
+    if(!all.length){
       emptyEl.hidden = false;
+      setHiddenById('saved-search', true);
+      setHiddenById('saved-no-match', true);
       listEl.innerHTML = '';
       return;
     }
     emptyEl.hidden = true;
-    listEl.innerHTML = list.slice().reverse().map(d => `
-      <details class="saved-card">
+    setHiddenById('saved-search', false);
+    setHiddenById('saved-search-clear', !rawQuery);
+
+    const tokens = parseSearchQuery(rawQuery);
+    const matched = all.filter(d => recipeMatchesQuery(d, tokens));
+    if(countEl) countEl.textContent = tokens.length ? matched.length + '件ヒット(保存' + all.length + '件中)' : '';
+    if(noMatchEl){
+      noMatchEl.hidden = matched.length > 0;
+      if(!matched.length) noMatchEl.textContent = '「' + rawQuery.trim() + '」に一致するレシピはありません。レシピ名や食材の一部を入力してみてください。';
+    }
+
+    // 再描画しても、開いていたカード・栄養の計算内訳は開いたままにする
+    const openCards = new Set();
+    const openNutrition = new Set();
+    listEl.querySelectorAll('.saved-card[open]').forEach(c => openCards.add(c.dataset.id));
+    listEl.querySelectorAll('.saved-card .nutrition-detail[open]').forEach(n => {
+      const card = n.closest('.saved-card');
+      if(card) openNutrition.add(card.dataset.id);
+    });
+
+    listEl.innerHTML = matched.slice().reverse().map(d => `
+      <details class="saved-card" data-id="${escapeSavedHtml(d.id)}">
         <summary>
           <div class="saved-card-head">
             <h2>${escapeSavedHtml(d.name)}</h2>
@@ -151,8 +217,15 @@
             <h3>作り方</h3>
             <ol>${(d.steps || []).map(x => '<li>' + escapeSavedHtml(x) + '</li>').join('')}</ol>
           </div>
+          ${renderSavedNutrition(d)}
           <button type="button" class="remove-saved-btn" data-remove-id="${escapeSavedHtml(d.id)}">このレシピを削除</button>
         </div>
       </details>
     `).join('');
+
+    listEl.querySelectorAll('.saved-card').forEach(card => {
+      if(openCards.has(card.dataset.id)) card.open = true;
+      const nd = card.querySelector('.nutrition-detail');
+      if(nd && openNutrition.has(card.dataset.id)) nd.open = true;
+    });
   }
