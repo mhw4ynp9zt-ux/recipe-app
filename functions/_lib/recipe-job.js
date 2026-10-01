@@ -22,7 +22,9 @@
 export const MAX_ATTEMPTS = 3;                  // 目標に収まらないとき、最大で何回作るか(最初の1回を含む)
 export const MAX_AI_CALLS = MAX_ATTEMPTS + 1;   // 1ジョブでAIを呼べる絶対の上限(引き継ぎで1回無駄になっても超えない)
 const AI_URL = "https://api.x.ai/v1/chat/completions";
-const AI_TIMEOUT_MS = 60000;            // AIの1回の呼び出しの上限
+// AIの1回の呼び出しの上限。考える時間が長いモデル(reasoning)は、返答を書き始める前に1分以上考えることがある。
+// 途中で打ち切ると、それまでの分の料金だけかかって結果が得られないため、画面を待たせない(ジョブ方式の)今は長めにする。
+const AI_TIMEOUT_MS = 150000;
 const RETRY_START_LIMIT_MS = 50000;     // 処理を始めてからこれを過ぎていたら、作り直しはせず今ある最良の結果を返す
 const HEARTBEAT_MS = 8000;              // 実行中の印(lease)と進捗をD1へ書く間隔(D1のクエリ数を抑えるため間隔は長め)
 const LEASE_MS = 25000;                 // この時間更新が無ければ「止まった」とみなし、別のリクエストが引き継げる
@@ -198,9 +200,11 @@ async function getJobState(env, user, jobId, deps, now = Date.now()) {
 
 // 成功: { content } / HTTPエラー: { status, body } / 通信失敗・タイムアウト・空の返答は例外
 // onChars(これまでに受け取った文字数) を受け取るたびに呼ぶ(進捗%の計算用)
-async function callAi(ai, messages, count, deps, onChars) {
+// stats(原因調査用): { chars: 受け取った文字数, firstChunkMs: 最初の文字が届くまでの時間, status: HTTPステータス }
+async function callAi(ai, messages, count, deps, onChars, stats = {}) {
+  const startedAt = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), deps.aiTimeoutMs || AI_TIMEOUT_MS);
   try {
     const doFetch = deps.fetch || globalThis.fetch;
     const res = await doFetch(AI_URL, {
@@ -209,6 +213,8 @@ async function callAi(ai, messages, count, deps, onChars) {
       body: JSON.stringify({ model: ai.model, max_tokens: deps.maxTokensFor(count), stream: true, messages }),
       signal: controller.signal,
     });
+    stats.status = res.status;
+    stats.headersMs = Date.now() - startedAt;
     if (!res.ok) {
       let body = "";
       try { body = await res.text(); } catch (e) { /* 本文が読めなくても status は返す */ }
@@ -236,7 +242,9 @@ async function callAi(ai, messages, count, deps, onChars) {
       if (chunk.error) throw new Error("stream error: " + (chunk.error.message || JSON.stringify(chunk.error)));
       const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta && chunk.choices[0].delta.content;
       if (typeof delta === "string" && delta) {
+        if (!content) stats.firstChunkMs = Date.now() - startedAt;
         content += delta;
+        stats.chars = content.length;
         onChars(content.length);
       }
     };
@@ -346,13 +354,18 @@ async function runAttempt(env, deps, job, live, { isAdmin, now }) {
 
   let content;
   let dishes;
+  const stats = { chars: 0 };
+  live.plan = plan;
+  live.aiStartedAt = now();
+  live.chars = 0;
   try {
     const r = await callAi(ai, messages, req.count, deps, (chars) => {
+      live.chars = chars;
       const frac = Math.min(0.97, chars / expected);
       live.progress = Math.max(live.progress, Math.round(plan.from + (plan.to - plan.from) * frac));
-    });
+    }, stats);
     if (r.status) {
-      trace.add("ai_http_error", { attempt: n, status: r.status, body: r.body }, best ? "warn" : "error");
+      trace.add("ai_http_error", { attempt: n, status: r.status, body: r.body, stats }, best ? "warn" : "error");
       if (best) { await finish(best, job.attempt); return "end"; } // 作り直しの途中で失敗したら、ここまでの最良の結果を返す
       console.error("xAI request failed: status " + r.status);
       if (r.status === 401 || r.status === 403) await fail("AIの設定に問題があります。管理者に連絡してください", 503, true);
@@ -360,11 +373,12 @@ async function runAttempt(env, deps, job, live, { isAdmin, now }) {
       return "end";
     }
     content = r.content;
-    trace.add("ai_response", { attempt: n, chars: content.length });
+    trace.add("ai_response", { attempt: n, chars: content.length, stats, elapsedMs: now() - live.aiStartedAt });
     dishes = deps.parseDishes(content, req);
   } catch (e) {
     // 通信失敗・タイムアウト・空の返答・返答の形式不正
-    trace.error("ai_or_parse_error", e, { attempt: n, rawContent: content }, best ? "warn" : "error");
+    // stats: 返答がどこまで届いていたか(最初の文字が来る前に時間切れか、途中までは来ていたか)を原因調査用に残す
+    trace.error("ai_or_parse_error", e, { attempt: n, rawContent: content, stats, elapsedMs: now() - live.aiStartedAt }, best ? "warn" : "error");
     if (best) {
       console.error("retry " + n + " failed: " + (e && e.message));
       await finish(best, job.attempt);
@@ -449,6 +463,11 @@ async function runJob(env, user, jobId, deps, { now = Date.now, heartbeatMs = HE
     if (beating) return;
     beating = true;
     try {
+      // 返答を書き始める前(モデルが考えている間)は文字数で測れないので、時間に応じて少しだけ進める(区間の25%まで)
+      if (live.stage === "ai" && live.chars === 0 && live.plan) {
+        const t = Math.min(1, (now() - live.aiStartedAt) / 60000);
+        live.progress = Math.max(live.progress, Math.round(live.plan.from + (live.plan.to - live.plan.from) * 0.25 * t));
+      }
       await run(env,
         "UPDATE recipe_jobs SET progress = MAX(progress, ?), stage = ?, lease_until = ?, updated_at = ? WHERE id = ? AND status = 'running'",
         live.progress, live.stage, now() + LEASE_MS, now(), jobId);
