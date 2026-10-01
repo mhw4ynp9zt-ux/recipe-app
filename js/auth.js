@@ -3,6 +3,8 @@
 // (window.SimpleWebAuthnBrowser)。
 // save.js の reloadSaved/migrateLocalSavedToServer に依存します。
 // ログイン状態が変わるたびに、settings.js の onAuthChanged()(管理者用の設定欄の表示切り替え)を呼びます。
+// 失敗は error-log.js の logError で管理者向けエラーログに記録します(ユーザーによるキャンセルは記録しません)。
+// ログアウト時は、端末にログが残らないようにログを消去します。
 //
 // パスキーは1人1つだけ。ユーザー名の入力はなく、ログイン中は「新規登録」ボタンも表示しません。
 
@@ -24,6 +26,14 @@
   }
   function hasUsedPasskey(){
     try { return localStorage.getItem(PASSKEY_USED_KEY) === '1'; } catch(e){ return false; }
+  }
+
+  // 管理者向けエラーログへ記録する(error-log.js が無い環境では何もしない)
+  function recordAuthError(step, err, extra){
+    if(typeof logError !== 'function') return;
+    const info = Object.assign({}, extra);
+    if(err && err.code) info.code = err.code; // @simplewebauthn/browser のエラーコード
+    logError('auth-' + step, err, info);
   }
 
   function showAuthStatus(msg, isError){
@@ -100,6 +110,7 @@
       showAuthStatus('登録が完了しました。', false);
       await reloadSaved();
     } catch(err){
+      if(!(err && err.name === 'NotAllowedError')) recordAuthError('register', err);
       showAuthStatus(describeAuthError(err), true);
     }
   }
@@ -133,6 +144,7 @@
       showAuthStatus('ログインしました。', false);
       await reloadSaved();
     } catch(err){
+      if(!(err && err.name === 'NotAllowedError')) recordAuthError('login', err);
       showAuthStatus(describeAuthError(err), true);
     }
   }
@@ -140,6 +152,7 @@
   async function logout(){
     try { await fetch('/api/auth/logout', { method: 'POST' }); } catch(e){ /* 無視 */ }
     currentUser = null;
+    if(typeof clearErrorLog === 'function') clearErrorLog(); // 端末にログを残さない
     renderAuthUI();
     await reloadSaved();
   }
@@ -154,8 +167,10 @@
     try {
       const res = await fetch('/api/auth/me');
       const data = await res.json();
+      if(!res.ok) recordAuthError('session', new Error('ログイン状態の確認に失敗しました(' + res.status + ')'), { status: res.status });
       currentUser = data.user || null;
     } catch(e){
+      recordAuthError('session', e);
       currentUser = null;
     }
     renderAuthUI();

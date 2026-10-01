@@ -2,7 +2,8 @@
 // 管理者としてログインしているときだけ表示されます(auth.js の renderAuthUI から onAuthChanged() が呼ばれます)。
 // APIキー・モデル・1日の上限はサーバー(/api/admin/ai-settings など)に保存され、この端末には保存しません。
 // 表示・非表示はあくまで見た目の制御で、実際の権限チェックはすべてサーバー側で行われます。
-// auth.js の isAdmin() に依存します。
+// auth.js の isAdmin()、error-log.js の logError/renderLogControls(管理者向けエラーログ)に依存します。
+// (error-log.js が無い環境でも動くよう、記録の呼び出しは recordAdminError 経由にしています)
 
   // 以前のバージョンでこの端末のlocalStorageに保存していたキー(移行後に削除します)
   const LEGACY_GROK_SETTINGS_KEY = 'recipeRouletteGrokSettingsV1';
@@ -23,12 +24,36 @@
     grokStatusEl.style.color = isError ? 'var(--protein)' : 'var(--veg)';
   }
 
+  // 管理者向けエラーログへ記録する(error-log.js が読み込まれていない環境では何もしない)
+  function recordAdminError(source, error, extra){
+    if(typeof logError === 'function') logError(source, error, extra);
+  }
+  function refreshLogControls(){
+    if(typeof renderLogControls === 'function') renderLogControls();
+  }
+
   // 管理者用APIを呼ぶ共通処理。失敗時はサーバーが返した日本語メッセージで例外にする。
+  // 失敗はエラーログに記録し、例外に logged = true を付ける(呼び出し側で二重に記録しないため)。
+  // リクエスト本文(APIキーを含みうる)は記録しない。サーバーが返す detail は管理者専用APIなので記録してよい。
   async function adminFetch(url, options){
-    const res = await fetch(url, options);
+    const method = (options && options.method) || 'GET';
+    let res;
+    try {
+      res = await fetch(url, options);
+    } catch(e){
+      recordAdminError('admin-api', e, { url: url, method: method });
+      e.logged = true;
+      throw e;
+    }
     let data = {};
     try { data = await res.json(); } catch(e){ /* 空のレスポンス */ }
-    if(!res.ok) throw new Error(data.error || '通信に失敗しました(' + res.status + ')');
+    if(!data || typeof data !== 'object') data = {};
+    if(!res.ok){
+      const err = new Error(data.error || '通信に失敗しました(' + res.status + ')');
+      recordAdminError('admin-api', err, { url: url, method: method, status: res.status, serverError: data.error, detail: data.detail });
+      err.logged = true;
+      throw err;
+    }
     return data;
   }
 
@@ -84,6 +109,7 @@
         }
       }
     } catch(err){
+      if(!err.logged) recordAdminError('admin-settings-load', err);
       showGrokStatus(err.message, true);
     }
   }
@@ -105,6 +131,7 @@
       setModelOptions(ids, selected);
       showGrokStatus('接続に成功しました(' + ids.length + '件のモデルが見つかりました)。使うモデルを選んで「設定を保存」を押してください。', false);
     } catch(err){
+      if(!err.logged) recordAdminError('admin-ai-test', err);
       showGrokStatus(err.message, true);
     } finally {
       grokTestBtn.disabled = false;
@@ -133,6 +160,7 @@
       await loadAdminSettings();
       showGrokStatus('設定を保存しました。', false);
     } catch(err){
+      if(!err.logged) recordAdminError('admin-settings-save', err);
       showGrokStatus(err.message, true);
     } finally {
       grokSaveBtn.disabled = false;
@@ -161,6 +189,7 @@
       foodsStatusEl.textContent = '現在の登録数: ' + data.total + ' 件' +
         (data.total >= FOODS_TOTAL ? '(登録済みです)' : '(未登録、または一部のみです。下のボタンで登録してください)');
     } catch(err){
+      if(!err.logged) recordAdminError('foods-status', err);
       foodsStatusEl.textContent = err.message;
     }
   }
@@ -169,6 +198,7 @@
     foodsImportBtn.disabled = true;
     foodsImportBtn.textContent = '登録中…';
     showFoodsMsg('データを読み込んでいます…', false);
+    let importedRows = 0; // 登録を送り終えた件数(失敗したときにどこまで進んだかをログに残す)
     try {
       const fileRes = await fetch('/data/foods.json');
       if(!fileRes.ok) throw new Error('data/foods.json が見つかりません。GitHubにアップロードされているか確認してください。');
@@ -183,10 +213,13 @@
           body: JSON.stringify({ init: i === 0, rows: rows.slice(i, i + FOODS_CHUNK) }),
         });
         total = data.total;
+        importedRows = Math.min(i + FOODS_CHUNK, rows.length);
       }
       showFoodsMsg('完了しました(登録数: ' + total + ' 件)。「作る」タブでレシピを作成して確認してください。', false);
       await loadFoodsStatus();
     } catch(err){
+      // 原因は adminFetch が記録済みの場合でも、どこまで進んだかは別に残す
+      recordAdminError('import-foods', err.logged ? new Error('成分表の取り込みが途中で止まりました(原因は直前の admin-api のログ)') : err, { importedRows: importedRows });
       showFoodsMsg('失敗しました: ' + err.message + '(もう一度押すと、最初からやり直せます)', true);
     } finally {
       foodsImportBtn.disabled = false;
@@ -196,6 +229,7 @@
 
   // ログイン状態が変わるたびに auth.js から呼ばれる。管理者のときだけ設定欄を表示する。
   function onAuthChanged(){
+    refreshLogControls();
     if(isAdmin()){
       adminSectionEl.hidden = false;
       loadAdminSettings();

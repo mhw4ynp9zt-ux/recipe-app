@@ -1,6 +1,7 @@
 // ==== レシピ作成機能(食材+雰囲気キーワード+選択した栄養指標の目標値・品数からAIがレシピを考える) ====
 // config.js の NUTRIENT_METRICS、utils.js の computeEffort/withPieceCount、
-// save.js の isSaved/toggleSave/recipes配列、auth.js の isLoggedIn/checkSession に依存します。
+// save.js の isSaved/toggleSave/recipes配列、auth.js の isLoggedIn/checkSession、
+// error-log.js の logError/logWarn(管理者向けエラーログ)に依存します。
 // 栄養量はAIの目分量ではなく、サーバーが日本食品標準成分表(D1)から計算した値を表示します(内訳は各品の「栄養の計算内訳」)。
 // AIの呼び出しはサーバー(/api/ai/create-recipe)が行います。ブラウザには食材・雰囲気・品数・栄養目標だけを送り、
 // APIキー・モデル・プロンプトはサーバー側(管理者が設定)で扱うため、この画面には一切現れません。
@@ -247,11 +248,14 @@
     setCreateLoading(true);
     createResultEl.hidden = true;
     createNoteEl.hidden = true;
+    // 失敗したときに管理者向けエラーログ(error-log.js)へ残す情報。サーバーの debug は管理者にだけ返ってくる。
+    const logContext = {};
     try {
       const target = getCreateTarget();
       const activeMetrics = getActiveMetrics();
       const targets = {};
       activeMetrics.forEach(m => { targets[m.id] = target[m.id]; });
+      logContext.request = { ingredients: ingredientsRaw, mood: moodRaw, count: target.count, targets: targets };
       const response = await fetch('/api/ai/create-recipe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -262,7 +266,24 @@
           targets: targets
         })
       });
-      const data = await response.json().catch(() => ({}));
+      logContext.status = response.status;
+      let rawText = '';
+      try { rawText = await response.text(); } catch(e){ /* 本文が読めなければ空として扱う */ }
+      let data = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch(e){
+        logContext.responseText = rawText; // JSONではない応答(エラーページのHTMLなど)は原因調査のため本文も残す
+      }
+      if(!data || typeof data !== 'object') data = {};
+      logContext.serverError = data.error;
+      logContext.debug = data.debug;
+      if(response.ok && data.debug){
+        // 作成は成功したが、作り直しの失敗・栄養計算の失敗・目標に収まらなかった等の問題があった場合
+        logWarn('create-recipe', '作成は成功しましたが、サーバーが問題を報告しました', {
+          request: logContext.request, status: response.status, debug: data.debug,
+        });
+      }
       if(!response.ok){
         // ログインの期限切れなら状態を更新し、サーバーが返した日本語メッセージ(上限到達など)をそのまま表示する
         if(response.status === 401) checkSession();
@@ -308,6 +329,7 @@
       });
       renderCreatedCombo(dishes, nutritionOk, data.targetCheck);
     } catch(err){
+      logError('create-recipe', err, logContext);
       showCreateError(err.userMessage || 'レシピの作成に失敗しました。もう一度お試しください。');
     } finally {
       setCreateLoading(false);

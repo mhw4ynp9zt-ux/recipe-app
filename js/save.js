@@ -3,6 +3,8 @@
 // isSaved/toggleSaveは今までどおり同期関数のまま使えるように、
 // savedCacheというメモリ上のキャッシュを介して読み書きします。
 // utils.js の withPieceCount、config.js の NUTRIENT_METRICS、auth.js の isLoggedIn に依存します。
+// サーバーへの保存・削除・取得の失敗は、error-log.js の logError で管理者向けエラーログに記録します
+// (画面の動きは変えません。従来どおり失敗しても画面上は何も出ません)。
 
   // 「作る」タブでAIが生成したレシピを保持する配列(保存ボタン押下時に元データを参照するため)
   const recipes = [];
@@ -21,28 +23,46 @@
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(list)); } catch(e){ /* 保存できない環境では無視 */ }
   }
 
+  // 管理者向けエラーログへ記録する(error-log.js が無い環境では何もしない)
+  function recordSaveError(step, err, extra){
+    if(typeof logError === 'function') logError('save-' + step, err, extra);
+  }
+  // サーバーが失敗(HTTPエラー)を返したときの記録。サーバーのエラーメッセージも添える
+  async function recordServerFailure(step, res, extra){
+    let serverError;
+    try { serverError = (await res.json()).error; } catch(e){ /* JSONでない応答 */ }
+    recordSaveError(step, new Error('サーバーが失敗を返しました(' + res.status + ')'),
+      Object.assign({ status: res.status, serverError: serverError }, extra));
+  }
+
   async function fetchServerSaved(){
     const res = await fetch('/api/recipes');
-    if(!res.ok) throw new Error('failed to fetch recipes');
+    if(!res.ok){
+      const err = new Error('failed to fetch recipes');
+      err.status = res.status;
+      throw err;
+    }
     const data = await res.json();
     return data.recipes || [];
   }
   async function saveToServer(recipe){
-    await fetch('/api/recipes', {
+    const res = await fetch('/api/recipes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(recipe),
     });
+    if(!res.ok) await recordServerFailure('save', res, { recipeId: recipe && recipe.id });
   }
   async function deleteFromServer(id){
-    await fetch('/api/recipes/' + encodeURIComponent(id), { method: 'DELETE' });
+    const res = await fetch('/api/recipes/' + encodeURIComponent(id), { method: 'DELETE' });
+    if(!res.ok) await recordServerFailure('delete', res, { recipeId: id });
   }
 
   // ログイン状態が変わった時・アプリ起動時に呼ぶ。savedCacheを最新化して画面に反映する。
   async function reloadSaved(){
     if(isLoggedIn()){
       try { savedCache = await fetchServerSaved(); }
-      catch(e){ savedCache = []; }
+      catch(e){ recordSaveError('fetch', e, { status: e && e.status }); savedCache = []; }
     } else {
       savedCache = getLocalSaved();
     }
@@ -56,7 +76,7 @@
     const local = getLocalSaved();
     if(!local.length) return;
     for(const r of local){
-      try { await saveToServer(r); } catch(e){ /* 失敗した分は次回また試す */ }
+      try { await saveToServer(r); } catch(e){ /* 失敗した分は次回また試す */ recordSaveError('migrate', e, { recipeId: r && r.id }); }
     }
     setLocalSaved([]);
   }
@@ -73,18 +93,18 @@
     const idx = savedCache.findIndex(r => r.id === id);
     if(idx >= 0){
       savedCache.splice(idx, 1);
-      if(isLoggedIn()) deleteFromServer(id).catch(()=>{});
+      if(isLoggedIn()) deleteFromServer(id).catch(e => recordSaveError('delete', e, { recipeId: id }));
       else setLocalSaved(savedCache);
     } else {
       savedCache.push(recipe);
-      if(isLoggedIn()) saveToServer(recipe).catch(()=>{});
+      if(isLoggedIn()) saveToServer(recipe).catch(e => recordSaveError('save', e, { recipeId: id }));
       else setLocalSaved(savedCache);
     }
     updateSavedCountBadge();
   }
   function removeSaved(id){
     savedCache = savedCache.filter(r => r.id !== id);
-    if(isLoggedIn()) deleteFromServer(id).catch(()=>{});
+    if(isLoggedIn()) deleteFromServer(id).catch(e => recordSaveError('delete', e, { recipeId: id }));
     else setLocalSaved(savedCache);
     renderSavedView();
     updateSavedCountBadge();
