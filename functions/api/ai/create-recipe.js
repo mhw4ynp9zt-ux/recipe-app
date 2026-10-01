@@ -7,15 +7,21 @@
 //   nutritionCheck  … 計算に入れられなかった食材 { unmatched, missing }
 //   protein など    … 目標に選んだ指標だけ、nutrition と同じ値を入れる(従来の表示と互換)
 //   nutritionOk     … 栄養計算に成功したか(成分表のテーブルが無いなどで失敗してもレシピは返す)
-//   targetCheck     … 全品の合計が目標の±5%に収まったか { ok, tolerancePct, attempts, results: [{ id, target, total, min, max, diffPct, ok }] }
-//                     (栄養計算に失敗したときは入らない)
-//   debug           … 【管理者のときだけ】失敗・警告の詳細(どの段階で何が起きたか)。エラー応答にも、
-//                     作り直しや栄養計算の失敗など問題があった成功応答にも入る。一般ユーザーには一切返さない。
+//   targetCheck     … 全品の合計が目標の許容範囲(±TOLERANCE。recipe-prompt.js で設定。現在±10%)に収まったか
+//                     { ok, tolerancePct, attempts, results: [{ id, target, total, min, max, diffPct, ok }] }
+//                     (栄養計算に失敗したときは入らない)。attempts が2以上なら、作り直して合格したことを表す。
+//   debug           … 【管理者のときだけ】どの段階で何が起きたかの記録。エラー応答にも、作り直しや栄養計算の失敗など
+//                     問題があった成功応答にも、作り直しが入った成功応答にも入る。一般ユーザーには一切返さない。
+//                     debug.level は全体の結果: "warn"(問題あり)/ "info"(作り直しはあったが、最終的に目標に収まった)。
 //                     APIキーは含まれない(debug-trace.js が伏せ字にする)。画面の「ログをダウンロード」に含まれる。
 //
-// 計算した合計が目標の±5%に入らないときは、計算結果(食材ごとの内訳つき)をAIに伝えて作り直させます。
-// 最大 MAX_ATTEMPTS 回(最初の1回を含む)まで試し、収まらなければ、目標に最も近かった結果を返します。
-// 作り直しの呼び出しは、利用回数としては最初の1回にまとめて数えます(ユーザーの操作1回=1回)。
+// 計算した合計が目標の許容範囲(±10%)に入らないときは、前回の合計と目標との差(増やす/減らす)と
+// 食材ごとの内訳をAIに伝えて作り直させます。ただしAIには、合格ラインより厳しい「±3%以内」を狙わせます
+// (AIM_TOLERANCE。recipe-prompt.js)。最大 MAX_ATTEMPTS 回(最初の1回を含む)まで試し、収まらなければ、
+// 目標に最も近かった結果を返します。作り直しの呼び出しは、利用回数としては最初の1回にまとめて数えます(ユーザーの操作1回=1回)。
+//
+// ログのレベル: 途中の目標未達(作り直しが続く場合)は info として残します。最終的に目標に収まったなら、
+// 作り直しがあっても全体は info です(警告にしない)。最終的に目標に収まらなかった・本当のエラーがあった場合だけ warn / error です。
 //
 // 管理者が設定したAPIキー・モデルをサーバー側で使ってxAIを呼びます(キーはブラウザに渡りません)。
 // アプリ全体の1日の利用上限に達している場合は 429 を返します。
@@ -30,7 +36,7 @@ import { attachNutrition } from "../../_lib/nutrition.js";
 import { createTrace } from "../../_lib/debug-trace.js";
 
 const AI_TIMEOUT_MS = 60000;      // AIの1回の呼び出しの上限
-const MAX_ATTEMPTS = 3;           // 目標の±5%に収まらないとき、最大で何回まで作る(最初の1回を含む)
+const MAX_ATTEMPTS = 3;           // 目標の許容範囲(±TOLERANCE)に収まらないとき、最大で何回まで作る(最初の1回を含む)
 const RETRY_START_LIMIT_MS = 50000; // 開始から、これを過ぎていたら作り直しはせず、今ある最良の結果を返す(待ち時間が長くなりすぎないように)
 
 // xAIを1回呼ぶ。成功: { content } / HTTPエラー: { status, body } / 通信失敗・タイムアウト・空の返答は例外
@@ -182,22 +188,27 @@ export async function onRequestPost({ request, env }) {
       }
 
       const check = checkTargets(dishes, req.metrics);
+      // このあと作り直しに進めるか(上限回数・待ち時間)。進めるなら、今回の未達は「途中経過」なので info で残す。
+      // (最終的に目標に収まれば全体を info にするため。進めない=これが最終結果なら、従来どおり warn)
+      const canRetry = attempt < MAX_ATTEMPTS && Date.now() - startedAt <= RETRY_START_LIMIT_MS;
+      const retrying = !check.ok && canRetry;
       trace.add("target_check", {
         attempt, ok: check.ok, worstPct: Math.round(check.worst * 10) / 10,
         results: check.results.map((r) => r.id + ": 目標" + r.target + " / 合計" + r.total + " (" + (r.diffPct > 0 ? "+" : "") + r.diffPct.toFixed(1) + "%)" + (r.ok ? "" : " NG")),
         unmatched: [...new Set(dishes.flatMap((d) => (d.nutritionCheck && d.nutritionCheck.unmatched) || []))],
-      }, check.ok ? "info" : "warn");
+        ...(retrying ? { retrying: true } : {}),
+      }, check.ok || retrying ? "info" : "warn");
       if (!best || check.worst < best.check.worst) best = { dishes, nutritionOk: true, check };
       if (check.ok) break;
-      if (attempt === MAX_ATTEMPTS || Date.now() - startedAt > RETRY_START_LIMIT_MS) {
+      if (!canRetry) {
         trace.add("retry_stopped", {
-          reason: attempt === MAX_ATTEMPTS ? "作り直しの上限(" + MAX_ATTEMPTS + "回)に達した" : "待ち時間の上限を超えた",
+          reason: attempt >= MAX_ATTEMPTS ? "作り直しの上限(" + MAX_ATTEMPTS + "回)に達した" : "待ち時間の上限を超えた",
           elapsedMs: Date.now() - startedAt,
         }, "warn");
         break;
       }
 
-      // 計算結果(合計と食材ごとの内訳)を伝えて、作り直してもらう
+      // 前回の合計と目標との差(増やす/減らす)・食材ごとの内訳を伝えて、作り直してもらう
       messages.push({ role: "assistant", content });
       messages.push({ role: "user", content: buildRetryPrompt(req, dishes, check) });
     }
@@ -213,8 +224,12 @@ export async function onRequestPost({ request, env }) {
         })),
       };
     }
-    // 管理者には、問題(作り直しの失敗・栄養計算の失敗・目標に収まらなかった等)があったときだけ詳細を付ける
-    if (trace.hasProblems()) result.debug = trace.dump();
+    // 管理者には、問題(作り直しの失敗・栄養計算の失敗・目標に収まらなかった等)があったときと、
+    // 作り直しが入ったときに詳細を付ける。全体のレベルは、問題があれば warn、作り直しだけなら info。
+    if (trace.enabled && (trace.hasProblems() || attempts > 1)) {
+      result.debug = trace.dump();
+      result.debug.level = trace.hasProblems() ? "warn" : "info";
+    }
     return json(result);
   } catch (e) {
     await refundUsage(env, reservation.day);
