@@ -27,7 +27,9 @@
   function hideCreateError(){
     createErrorEl.hidden = true;
   }
+  const CREATE_LOADING_TEXT = 'レシピを考えています…(画面を開いたままお待ちください)';
   function setCreateLoading(isLoading){
+    if(isLoading) createLoadingEl.textContent = CREATE_LOADING_TEXT;
     createLoadingEl.hidden = !isLoading;
     generateBtn.disabled = isLoading;
     generateBtn.style.opacity = isLoading ? '0.6' : '1';
@@ -250,22 +252,44 @@
     createNoteEl.hidden = true;
     // 失敗したときに管理者向けエラーログ(error-log.js)へ残す情報。サーバーの debug は管理者にだけ返ってくる。
     const logContext = {};
+    const startedAt = Date.now();
+    // 待っている間に画面を離れた(ロック・アプリ切り替え)かを記録する。iOSはその間に通信を切ることがある
+    let wasHidden = false;
+    const onVisibility = () => { if(document.visibilityState === 'hidden') wasHidden = true; };
+    document.addEventListener('visibilitychange', onVisibility);
     try {
       const target = getCreateTarget();
       const activeMetrics = getActiveMetrics();
       const targets = {};
       activeMetrics.forEach(m => { targets[m.id] = target[m.id]; });
       logContext.request = { ingredients: ingredientsRaw, mood: moodRaw, count: target.count, targets: targets };
-      const response = await fetch('/api/ai/create-recipe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ingredients: ingredientsRaw,
-          mood: moodRaw,
-          count: target.count,
-          targets: targets
-        })
+      const requestBody = JSON.stringify({
+        ingredients: ingredientsRaw,
+        mood: moodRaw,
+        count: target.count,
+        targets: targets
       });
+      // 応答が返る前に通信が切れた場合(iOS Safariでは TypeError "Load failed")だけ、1回だけ自動で再試行する。
+      // サーバーが返したエラー(401/429/502など)は再試行しない。
+      let response;
+      for(let n = 1; n <= 2; n++){
+        logContext.fetchAttempts = n;
+        try {
+          response = await fetch('/api/ai/create-recipe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: requestBody
+          });
+          break;
+        } catch(netErr){
+          if(!(netErr instanceof TypeError) || n === 2) throw netErr;
+          logWarn('create-recipe', '通信が切れたため自動で再試行します', {
+            request: logContext.request, message: netErr.message,
+            elapsedMs: Date.now() - startedAt, wasHidden: wasHidden,
+          });
+          createLoadingEl.textContent = '通信が切れたため、もう一度試しています…';
+        }
+      }
       logContext.status = response.status;
       let rawText = '';
       try { rawText = await response.text(); } catch(e){ /* 本文が読めなければ空として扱う */ }
@@ -329,9 +353,12 @@
       });
       renderCreatedCombo(dishes, nutritionOk, data.targetCheck);
     } catch(err){
+      logContext.elapsedMs = Date.now() - startedAt;
+      logContext.wasHidden = wasHidden;
       logError('create-recipe', err, logContext);
       showCreateError(err.userMessage || 'レシピの作成に失敗しました。もう一度お試しください。');
     } finally {
+      document.removeEventListener('visibilitychange', onVisibility);
       setCreateLoading(false);
     }
   }
