@@ -40,11 +40,17 @@
   const CREATE_LOADING_TEXT = 'レシピを考えています…';
   const CREATE_LOADING_NOTE = '画面を離れても大丈夫です。戻ると続きが表示されます。';
 
-  // ==== 進捗のパーセント表示(サーバーが返す進捗%を、なめらかに追いかけて表示する) ====
-  // 進捗%は、AIが返答を書いた量(ストリーミング)と、栄養計算・目標チェック・作り直しの段階から、サーバーが計算します。
-  // 画面側の表示は戻らず(単調増加)、完成するまで100%にはなりません。
+  // ==== 進捗のパーセント表示 ====
+  // 表示する進捗 = 「経過時間による目安」と「サーバーが知らせた実際の進捗」の大きい方。
+  //   ・経過時間による目安: 見込み時間(過去の作成にかかった時間。無ければ30秒)まで一定の速さで90%まで進み、
+  //     それを過ぎてもゆっくり98%に近づく。AIが「考えている間は進まず、書き始めると一気に進む」ことがあるため、
+  //     実際の進捗だけだと途中で止まって見えるのを避けるためのもの。
+  //   ・サーバーの進捗: AIが返答を書いた量(ストリーミング)と、栄養計算・目標チェック・作り直しの段階から計算した実際の値。
+  //     目安より先に進んだときは、こちらに追いつく。
+  // 表示は戻らず(単調増加)、完成するまで100%にはなりません。
   let progressTarget = 0;   // サーバーが最後に知らせた進捗(0〜99。完成時だけ100)
   let progressShown = 0;    // いま画面に出している進捗(目標へ少しずつ近づく)
+  let progressClock = null; // 経過時間による目安の基準 { startedAt, duration }
   let progressFillEl = null;
   let progressPctEl = null;
   let progressTrackEl = null;
@@ -94,12 +100,40 @@
     if(v > progressTarget) progressTarget = v;
   }
 
+  // 経過時間による目安(%)。見込み時間 duration までは一定の速さで90%、その後は98%へゆっくり近づく
+  function timeCurve(elapsedMs, duration){
+    if(elapsedMs <= 0) return 0;
+    if(elapsedMs <= duration) return 90 * elapsedMs / duration;
+    return 90 + 8 * (1 - Math.exp(-(elapsedMs - duration) / (duration * 0.6)));
+  }
+
+  // 過去の作成にかかった時間(品数ごとに直近5件)の中央値を、次の見込み時間にする
+  const DURATION_KEY = 'recipeJobDurationsV1';
+  const DEFAULT_DURATION_MS = 30000;
+  function readDurations(){
+    try { return JSON.parse(localStorage.getItem(DURATION_KEY) || '{}') || {}; } catch(e){ return {}; }
+  }
+  function expectedDuration(count){
+    const list = (readDurations()[count] || []).filter(n => Number.isFinite(n) && n > 0).sort((a, b) => a - b);
+    if(!list.length) return DEFAULT_DURATION_MS;
+    return Math.max(8000, Math.min(120000, list[Math.floor(list.length / 2)]));
+  }
+  function recordDuration(count, ms){
+    if(!(ms > 0)) return;
+    const all = readDurations();
+    all[count] = ((all[count] || []).concat([ms])).slice(-5);
+    try { localStorage.setItem(DURATION_KEY, JSON.stringify(all)); } catch(e){ /* 保存できなければ、次回も初期の見込みを使う */ }
+  }
+
   function tickProgress(){
     if(!loadingActive) return;
-    const gap = progressTarget - progressShown;
-    if(gap > 0) progressShown = Math.min(progressTarget, progressShown + Math.max(gap * 0.12, 0.2));
+    let target = progressTarget;
+    if(progressClock) target = Math.max(target, timeCurve(Date.now() - progressClock.startedAt, progressClock.duration));
+    target = Math.min(target, progressTarget >= 100 ? 100 : 99);
+    const gap = target - progressShown;
+    if(gap > 0) progressShown = Math.min(target, progressShown + Math.max(gap * 0.25, 0.1));
     renderProgress();
-    setTimeout(tickProgress, 120);
+    setTimeout(tickProgress, 100);
   }
 
   // 進捗の段階の文言(サーバーの stage と、ここまでに成功したAI呼び出しの回数 attempt から)
@@ -131,6 +165,7 @@
       ensureProgressUi();
       progressTarget = 0;
       progressShown = 0;
+      progressClock = null;
       renderProgress();
       setLoadingSub(CREATE_LOADING_NOTE);
       tickProgress();
@@ -481,10 +516,14 @@
   }
 
   // ジョブの進捗を追い、完成・失敗まで見届ける。
-  //   ・1秒ごとにGET(読むだけ)で進捗%を更新する
-  //   ・サーバーが「実行中なのに誰も処理していない(stalled)」と知らせたときだけ、POSTで続きを動かす
+  //   ・新しく作ったジョブは、すぐ POST で動かし始める(状況を確かめてから動かすと、通信の往復が増えて遅くなるため)
+  //   ・POST は完成まで待つ要求で、完成したときの状況が返る。それを直接使うので、完成を待たずに受け取れる
+  //   ・1秒ごとの GET(読むだけ)で進捗%を更新する。通信が切れた・画面を離れた後は、これで続きを受け取る
+  //   ・サーバーが「実行中なのに誰も処理していない(stalled)」と知らせたときも、POST で続きを動かす
   async function watchJob(job){
     watchingJobId = job.id;
+    const count = job.request && job.request.count;
+    progressClock = { startedAt: job.startedAt, duration: expectedDuration(count) };
     const logContext = { request: job.request, jobId: job.id, startedAt: job.startedAt, resumed: !!job.resumed };
     let wasHidden = document.visibilityState === 'hidden';
     const onVisibility = () => { if(document.visibilityState === 'hidden') wasHidden = true; };
@@ -493,25 +532,68 @@
     let lastRunAt = 0;
     let failures = 0;
     let polls = 0;
+    let finished = false;
 
-    const kickRun = () => {
+    // サーバーが返した状況を画面に反映する。完成・失敗で終わったら true(結果の表示・エラー表示まで行う)
+    const applyState = (state) => {
+      if(finished) return true;
+      logContext.polls = polls;
+      if(state.status === 'done'){
+        finished = true;
+        setProgressTarget(100);
+        progressShown = 100;
+        renderProgress();
+        logContext.wasHidden = wasHidden;
+        try {
+          showJobResult(state.result || {}, logContext);
+        } catch(err){
+          failWatching(job.id, err, logContext);
+          return true;
+        }
+        // 待たされた時間を、次回の進捗の見込みに使う(画面を離れていた場合は、待ち時間として正しくないので使わない)
+        if(!job.resumed && !wasHidden) recordDuration(count, Date.now() - job.startedAt);
+        endWatching(job.id);
+        return true;
+      }
+      if(state.status === 'error'){
+        finished = true;
+        logContext.status = state.httpStatus;
+        logContext.serverError = state.error;
+        logContext.debug = state.debug;
+        logContext.wasHidden = wasHidden;
+        const apiErr = new Error('API request failed: ' + state.httpStatus);
+        apiErr.userMessage = state.error;
+        failWatching(job.id, apiErr, logContext);
+        return true;
+      }
+      // 作成中: 進捗%と段階を更新し、誰も処理していなければ続きを動かす
+      setProgressTarget(state.progress);
+      setLoadingSub(stageText(state));
+      if(state.stalled && !runInFlight && Date.now() - lastRunAt >= RUN_RETRY_GAP_MS) kickRun();
+      return false;
+    };
+
+    function kickRun(){
       runInFlight = true;
       lastRunAt = Date.now();
       logContext.runRequests = (logContext.runRequests || 0) + 1;
       // 完了まで待つ要求。切れても(画面を離れた・iOSが通信を切った)、サーバーは続き、状況はGETで分かる
       fetch('/api/ai/jobs/' + encodeURIComponent(job.id), { method: 'POST', headers: { 'Content-Type': 'application/json' } })
-        .catch(() => { /* 通信が切れただけ。状況はGETで確認する */ })
-        .then(() => { runInFlight = false; if(wakeWatcher) wakeWatcher(); });
-    };
+        .then(res => (res.ok ? readJson(res) : null))
+        .then(body => { runInFlight = false; if(body && body.data && body.data.status) applyState(body.data); })
+        .catch(() => { runInFlight = false; /* 通信が切れただけ。状況はGETで確認する */ })
+        .then(() => { if(wakeWatcher) wakeWatcher(); });
+    }
 
     try {
-      while(watchingJobId === job.id){
-        let state = null;
+      if(!job.resumed) kickRun();
+      while(watchingJobId === job.id && !finished){
         try {
           const res = await fetch('/api/ai/jobs/' + encodeURIComponent(job.id), { cache: 'no-store' });
           polls++;
           const body = await readJson(res);
           logContext.status = res.status;
+          if(finished) return; // 待っている間に、実行要求の応答で完成していた
           if(res.status === 401){
             checkSession();
             logContext.serverError = body.data.error;
@@ -524,8 +606,8 @@
             return;
           }
           if(!res.ok) throw new Error('Job polling failed: ' + res.status);
-          state = body.data;
           failures = 0;
+          if(applyState(body.data)) return;
         } catch(netErr){
           // 通信が切れている間(圏外・ロック中など)は、つながるまで待つ。サーバー側の作成は止まらない
           failures++;
@@ -535,39 +617,6 @@
             return;
           }
           setLoadingSub('通信を待っています…つながると続きを受け取ります');
-        }
-
-        if(state){
-          logContext.polls = polls;
-          if(state.status === 'done'){
-            setProgressTarget(100);
-            progressShown = 100;
-            renderProgress();
-            await sleepOrWake(250); // 100% を一瞬見せてから結果へ
-            logContext.wasHidden = wasHidden;
-            try {
-              showJobResult(state.result || {}, logContext);
-            } catch(err){
-              failWatching(job.id, err, logContext);
-              return;
-            }
-            endWatching(job.id);
-            return;
-          }
-          if(state.status === 'error'){
-            logContext.status = state.httpStatus;
-            logContext.serverError = state.error;
-            logContext.debug = state.debug;
-            logContext.wasHidden = wasHidden;
-            const apiErr = new Error('API request failed: ' + state.httpStatus);
-            apiErr.userMessage = state.error;
-            failWatching(job.id, apiErr, logContext);
-            return;
-          }
-          // 作成中: 進捗%と段階を更新し、誰も処理していなければ続きを動かす
-          setProgressTarget(state.progress);
-          setLoadingSub(stageText(state));
-          if(state.stalled && !runInFlight && Date.now() - lastRunAt >= RUN_RETRY_GAP_MS) kickRun();
         }
         await sleepOrWake(document.visibilityState === 'hidden' ? POLL_HIDDEN_MS : POLL_VISIBLE_MS);
       }
