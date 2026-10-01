@@ -3,6 +3,9 @@
 // (自由なプロンプトを受け付けると、AIの中継として悪用されてしまうため)
 // 栄養量はAIに答えさせず、AIが返した食材と重さをもとに nutrition.js が日本食品標準成分表(D1)から計算します。
 //
+// ユーザーごとの「使わない食材」(設定タブで登録)は、ブラウザからは受け取りません。
+// ジョブの開始時にサーバーがDBから読み、req.excluded(名前の配列)としてここへ渡します(recipe-job.js の startJob)。
+//
 // 注意: METRICS は js/config.js の NUTRIENT_METRICS(id・label・unit)と同じ内容に保ってください。
 // max は入力できる目標値の上限です。
 
@@ -101,8 +104,14 @@ function checkTargets(dishes, metrics) {
   };
 }
 
+// ユーザーが「使わない」と登録した食材の一覧(req.excluded)。無ければ空配列
+function excludedOf(req) {
+  return Array.isArray(req.excluded) ? req.excluded.filter((x) => typeof x === "string" && x) : [];
+}
+
 function buildPrompt(req) {
   const { ingredients, mood, count, metrics } = req;
+  const excluded = excludedOf(req);
 
   // AIには合格ライン(TOLERANCE)ではなく、より厳しい狙い(AIM_TOLERANCE)を伝える
   const aimPct = Math.round(AIM_TOLERANCE * 100);
@@ -123,12 +132,22 @@ function buildPrompt(req) {
     ? '・1品だけの構成のため、スープ(種類:「スープ」)は選ばないでください\n'
     : '・スープ(種類:「スープ」)を1品含める場合、その1品に使う野菜と肉・魚介・豆腐などの具材は合計300g以内に収めてください(recorteのスープメーカーを使用しており、1回に調理できる野菜+具材が合計300gまでのため)\n';
 
+  // ユーザーごとに登録された「使わない食材」(設定タブ)。毎回の入力なしで、すべての作成に自動で加わる
+  const excludedSection = excluded.length
+    ? '【使わない食材(ユーザーが苦手・避けたい食材。絶対に使わない)】\n' + excluded.map((n) => '・' + n).join('\n') + '\n\n'
+    : '';
+  const excludedRule = excluded.length
+    ? '・上の【使わない食材】は、主材料・副材料・調味料・だし・飾りのどれにも一切使わない。「豚肉」のような大きな分類が書かれていたら、ロース・バラ・ひき肉など、その分類に含まれるすべての部位・種類も使わない。使いたい食材や雰囲気の指定と重なる場合も、使わない食材を優先する\n'
+    : '';
+
   return 'あなたは家庭料理のレシピ考案アシスタントです。以下の条件をもとに、' + count + '品分のレシピを考えて、JSON配列の形式のみで出力してください。前置き・説明・Markdownのコードブロック記号(```)は一切つけないでください。\n\n' +
     '【使う食材】\n' + (ingredients ? ingredients : '指定なし(栄養の目標に合う食材をAIが自由に選んでよい)') + '\n\n' +
+    excludedSection +
     '【料理の雰囲気・ジャンル・味の方向性】\n' + (mood ? mood : '指定なし(自由に発想してよい)') + '\n\n' +
     '【栄養の目標】\n' + targetText + '\n\n' +
     '【品数】\n' + countText + '\n\n' +
     '【必ず守る条件】\n' +
+    excludedRule +
     '・油はごま油かオリーブオイルのみ使用する(サラダ油などの他の植物油は使わない)\n' +
     '・ハム・ソーセージ・ベーコンなどの加工肉は使わない\n' +
     '・家庭で無理なく作れる、実在感のある料理にする\n' +
@@ -154,15 +173,37 @@ function buildPrompt(req) {
     ']';
 }
 
-// 目標の許容範囲(±TOLERANCE)から外れたときに、AIへ送る「作り直し」の依頼文。
+// 目標の許容範囲(±TOLERANCE)から外れたとき、または使わない食材が含まれていたときに、AIへ送る「作り直し」の依頼文。
 // 会話の続き(1回目のプロンプト → AIの返答 → この依頼文)として送るので、条件の全文は繰り返さない。
 // 前回の合計と目標との差(例: 前回563kcalで-6.2%不足)を、増やす/減らすの向きと量つきで伝える。
 // やり直しでもAIには、合格ラインではなく狙い(±AIM_TOLERANCE)を伝える。
 // dishes は attachNutrition 済み。各食材の ingredientDetails[i].contrib(その食材が各栄養素に寄与した量)があれば内訳に使う。
-function buildRetryPrompt(req, dishes, check) {
+// hits: 使わない食材として登録されているのに、前回のレシピに含まれていた食材の名前(無ければ空)
+function buildRetryPrompt(req, dishes, check, hits = []) {
   const pct = Math.round(TOLERANCE * 100);
   const aimPct = Math.round(AIM_TOLERANCE * 100);
   const off = check.results.filter((r) => !r.ok);
+  const excluded = excludedOf(req);
+
+  const hitText = hits.length
+    ? '【使ってはいけない食材が含まれていました】\n' + hits.map((n) => '・' + n).join('\n') + '\n' +
+      'これらはユーザーが「使わない」と登録した食材です。前回のレシピの料理名・材料(関連する部位・加工品も)から、すべて取り除いてください。\n\n'
+    : '';
+  const excludedKeep = excluded.length
+    ? '・【使わない食材】(' + excluded.join('、') + ')は、作り直しでも絶対に使わないでください。分量を調整するときや食材を入れ替えるときも、これらを加えないこと。\n'
+    : '';
+
+  // 目標は許容範囲に収まっていて、使わない食材だけを直したいとき
+  if (!off.length) {
+    return hitText +
+      '栄養量を成分表から計算したところ、前回の合計は目標の±' + pct + '%の許容範囲に収まっていました。\n\n' +
+      '【やり直しのお願い】\n' +
+      '・上の食材を取り除き、別の食材に置き換えて作り直してください。置き換えたあとも、すべての目標が目標値の±' + aimPct + '%以内に入るよう、材料の grams を調整してください。\n' +
+      '・料理の方向性はできるだけ保ってください。\n' +
+      '・amount の表記も、grams に合わせて直してください。\n' +
+      excludedKeep +
+      '・「必ず守る条件」と出力形式は最初の依頼のとおりです。JSON配列のみを出力し、前置き・コードブロック記号はつけないでください。';
+  }
 
   const summary = check.results.map((r) => {
     const rg = displayRange(r.target);
@@ -196,7 +237,8 @@ function buildRetryPrompt(req, dishes, check) {
       '\nこれらは成分表の食品と照合できず、上の合計に含まれていません。food を成分表の表記(例: "たまねぎ りん茎 生")に直し、grams も入れてください。'
     : '';
 
-  return '栄養量をこちらで日本食品標準成分表から計算したところ、目標の±' + pct + '%の許容範囲に収まっていませんでした。\n\n' +
+  return hitText +
+    '栄養量をこちらで日本食品標準成分表から計算したところ、目標の±' + pct + '%の許容範囲に収まっていませんでした。\n\n' +
     '【前回の計算結果と、直す向き】\n' + summary + '\n\n' +
     '【範囲を外れた栄養素の、食材ごとの内訳】\n' + detail + unmatchedText + '\n\n' +
     '【やり直しのお願い】\n' +
@@ -204,6 +246,7 @@ function buildRetryPrompt(req, dishes, check) {
     '・ある栄養素の調整は他の栄養素にも影響します。範囲内だった栄養素が外れないよう、全体を計算し直してください。\n' +
     '・料理の方向性はできるだけ保ち、重さの調整で足りないときに限って、食材の追加・入れ替えをしてください。\n' +
     '・amount の表記も、grams に合わせて直してください。\n' +
+    excludedKeep +
     '・「必ず守る条件」と出力形式は最初の依頼のとおりです。JSON配列のみを出力し、前置き・コードブロック記号はつけないでください。';
 }
 

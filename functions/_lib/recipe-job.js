@@ -16,6 +16,12 @@
 //   ・実行中のジョブがあるユーザーが新しく作ろうとしたら、新しいジョブは作らず実行中のものを返す
 //   ・利用回数は、ユーザーの操作1回=1回(作り直しや引き継ぎは数え直さない)。失敗したら戻す
 //
+// ユーザーごとの「使わない食材」(設定タブで登録)
+//   ・startJob がDBから読み(読むだけ。AIは呼ばない)、ジョブの条件(request.excluded)に入れる。AIへの指示は buildPrompt が作る
+//   ・AIが指示を守らず、使わない食材をレシピに入れてしまったら、目標を外れたときと同じ「作り直し」の対象にする。
+//     作り直しの回数・AI呼び出しの上限(MAX_ATTEMPTS / MAX_AI_CALLS)は変わらない(=費用の上限も変わらない)
+//   ・上限まで作り直しても残ったときは、result.excludedHits で画面に知らせる
+//
 // 依存(AI設定・プロンプト・栄養計算など)は deps で受け取る。本番は recipe-job-deps.js の defaultDeps、
 // テストでは偽物を渡して、実際のAI(有料)を呼ばずに動かせる。
 
@@ -149,6 +155,17 @@ async function startJob(env, user, body, deps, now = Date.now()) {
     return { status: 200, body: { jobId: running.id, resumed: true, status: "running", progress: running.progress } };
   }
 
+  // ユーザーごとに登録された「使わない食材」を読む(DBを読むだけ。AIは呼ばない)。
+  // 画面からは受け取らない(本人の登録内容だけが使われる)。読めなかったときは、除外が効かないまま作らないよう、
+  // 利用回数を消費する前に失敗にする。
+  try {
+    req.excluded = deps.loadExcludedFoods ? await deps.loadExcludedFoods(env, user.id) : [];
+  } catch (e) {
+    console.error("loadExcludedFoods failed: " + (e && e.message));
+    trace.error("load_excluded_failed", e);
+    return fail("サーバーでエラーが発生しました。もう一度お試しください", 500);
+  }
+
   let ai;
   try {
     ai = await deps.loadAiSettings(env, { decrypt: true });
@@ -163,6 +180,7 @@ async function startJob(env, user, body, deps, now = Date.now()) {
     count: req.count,
     targets: req.metrics.map((m) => m.id + "=" + m.target + m.unit),
     ingredientsChars: req.ingredients.length, moodChars: req.mood.length,
+    excludedCount: req.excluded.length,
   });
   if (!ai.apiKey) {
     trace.add("no_api_key", { reason: ai.keyError ? "保存済みのAPIキーを復号できません(SETTINGS_ENC_KEYが変わった可能性)" : "APIキーが未設定です" }, "error");
@@ -282,7 +300,8 @@ async function callAi(ai, messages, count, deps, onChars, stats = {}) {
 
 // ==== ジョブの実行 ====
 
-// 結果を確定して完成にする。best: { dishes, nutritionOk, check }
+// 結果を確定して完成にする。best: { dishes, nutritionOk, check, hits }
+// hits: 使わない食材として登録されているのに、レシピに残ってしまった食材の名前(無ければ空。古いジョブでは未定義)
 async function finishJob(env, deps, job, { best, attempts, trace, stepStart, now }) {
   const result = { dishes: best.dishes, nutritionOk: best.nutritionOk };
   if (best.check) {
@@ -295,6 +314,7 @@ async function finishJob(env, deps, job, { best, attempts, trace, stepStart, now
       })),
     };
   }
+  if (best.hits && best.hits.length) result.excludedHits = best.hits;
   await run(env,
     `UPDATE recipe_jobs SET status = 'done', stage = 'done', progress = 100, result = ?, trace = ?, attempt = ?,
        active_ms = ?, lease_until = 0, updated_at = ? WHERE id = ? AND status = 'running'`,
@@ -319,6 +339,10 @@ function mergedTrace(job, trace, stepStart) {
   const events = (parse(job.trace, []) || []).concat(dump.events.map((ev) => ({ ...ev, t: ev.t + offset })));
   return JSON.stringify(events.slice(0, MAX_TRACE_EVENTS));
 }
+
+// 2つの結果のうち、どちらが「より良いか」。使わない食材が残っている数が少ない方を優先し、同じなら目標に近い方。
+const hitCount = (b) => (b && b.hits ? b.hits.length : 0);
+const isBetter = (a, b) => (hitCount(a) !== hitCount(b) ? hitCount(a) < hitCount(b) : a.check.worst < b.check.worst);
 
 // 1回分(AI呼び出し→栄養計算→目標チェック)。返り値: "continue"(作り直しへ進む) / "end"(完成か失敗で終わった)
 // job はメモリ上の最新の状態(呼び出し側が更新して持ち回る)
@@ -401,6 +425,10 @@ async function runAttempt(env, deps, job, live, { isAdmin, now }) {
     return "end";
   }
 
+  // 使わない食材が入っていないか確認する(AIは呼ばない。名前の照合だけ)
+  const excluded = Array.isArray(req.excluded) ? req.excluded : [];
+  const hits = excluded.length && deps.findExcludedHits ? deps.findExcludedHits(dishes, excluded) : [];
+
   // 栄養量は成分表から計算する。失敗してもAIのレシピ自体は返す(利用回数も戻さない)。
   const aiEndedAt = now();
   live.stage = "nutrition";
@@ -415,12 +443,13 @@ async function runAttempt(env, deps, job, live, { isAdmin, now }) {
   }
   if (!nutritionOk) {
     // 計算できないので、目標に収まったか確かめようがない。作り直しはしない
-    if (!best) best = { dishes, nutritionOk: false, check: null };
+    if (!best) best = { dishes, nutritionOk: false, check: null, hits };
     await finish(best, n);
     return "end";
   }
 
   const check = deps.checkTargets(dishes, req.metrics);
+  const ok = check.ok && hits.length === 0; // 目標に収まり、かつ使わない食材も入っていない
   const activeMs = job.active_ms + (now() - stepStart);
   // 所要時間の内訳(遅いと感じたときの原因調査用)。全体が45秒を超えたら warn にして、管理者のログに必ず残す
   trace.add("timing", {
@@ -429,15 +458,17 @@ async function runAttempt(env, deps, job, live, { isAdmin, now }) {
   }, activeMs > 45000 ? "warn" : "info");
   // このあと作り直しに進めるか(上限回数・待ち時間・AI呼び出しの絶対上限)
   const canRetry = n < MAX_ATTEMPTS && activeMs <= RETRY_START_LIMIT_MS && job.ai_calls < MAX_AI_CALLS;
-  const retrying = !check.ok && canRetry;
+  const retrying = !ok && canRetry;
   trace.add("target_check", {
     attempt: n, ok: check.ok, worstPct: Math.round(check.worst * 10) / 10,
     results: check.results.map((r) => r.id + ": 目標" + r.target + " / 合計" + r.total + " (" + (r.diffPct > 0 ? "+" : "") + r.diffPct.toFixed(1) + "%)" + (r.ok ? "" : " NG")),
     unmatched: [...new Set(dishes.flatMap((d) => (d.nutritionCheck && d.nutritionCheck.unmatched) || []))],
+    ...(hits.length ? { excludedHits: hits } : {}),
     ...(retrying ? { retrying: true } : {}),
-  }, check.ok || retrying ? "info" : "warn");
-  if (!best || check.worst < best.check.worst) best = { dishes, nutritionOk: true, check };
-  if (check.ok) { await finish(best, n); return "end"; }
+  }, ok || retrying ? "info" : "warn");
+  const candidate = { dishes, nutritionOk: true, check, hits };
+  if (!best || isBetter(candidate, best)) best = candidate;
+  if (ok) { await finish(best, n); return "end"; }
   if (!canRetry) {
     trace.add("retry_stopped", {
       reason: n >= MAX_ATTEMPTS ? "作り直しの上限(" + MAX_ATTEMPTS + "回)に達した"
@@ -448,9 +479,9 @@ async function runAttempt(env, deps, job, live, { isAdmin, now }) {
     return "end";
   }
 
-  // 作り直しへ: 前回の合計と目標との差・食材ごとの内訳を伝える会話を作って保存する
+  // 作り直しへ: 前回の合計と目標との差・食材ごとの内訳(使わない食材が入っていたら、その名前も)を伝える会話を作って保存する
   messages.push({ role: "assistant", content });
-  messages.push({ role: "user", content: deps.buildRetryPrompt(req, dishes, check) });
+  messages.push({ role: "user", content: deps.buildRetryPrompt(req, dishes, check, hits) });
   const nextPlan = planFor(n + 1);
   Object.assign(job, {
     attempt: n, messages: JSON.stringify(messages), best: JSON.stringify(best), expected_chars: content.length,
