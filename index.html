@@ -66,18 +66,11 @@
 
     <button class="reroll" id="btn-generate" style="margin-bottom:16px;">レシピを作成する</button>
 
-    <div id="create-loading" class="create-progress" hidden aria-live="polite">
-      <div class="progress-row">
-        <span class="progress-spinner" aria-hidden="true"></span>
-        <span class="progress-status" id="create-progress-status">準備しています</span>
-        <span class="progress-percent" id="create-progress-percent" role="progressbar" aria-label="レシピ作成の進み具合" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">0%</span>
-      </div>
-      <ul class="progress-dishes" id="create-progress-dishes"></ul>
-    </div>
+    <p id="create-loading" class="input-hint" hidden style="text-align:center;">レシピを考えています…</p>
     <p id="create-error" class="input-hint" hidden style="text-align:center;color:var(--protein);"></p>
 
     <section class="result" id="create-result" hidden></section>
-    <p class="note" id="create-note" hidden>※栄養量は日本食品標準成分表(八訂)の値をもとに、材料の重量から計算しています(調理による増減は含みません)。体調や好みに合わせて調整してください。</p>
+    <p class="note" id="create-note" hidden>※栄養量は目安です。体調や好みに合わせて調整してください。</p>
   </div>
 
   <div id="view-settings" hidden>
@@ -112,6 +105,14 @@
       <button class="reroll" id="btn-grok-test" style="margin-top:14px;">接続テスト・モデルを取得</button>
       <button class="reroll" id="btn-grok-save" style="margin-top:10px;">設定を保存</button>
       <p id="grok-test-status" class="input-hint" hidden style="text-align:center;"></p>
+
+      <div class="exclude-block" style="margin-top:26px;">
+        <label>成分表の登録(管理者のみ)</label>
+        <p class="input-hint">レシピの栄養量の計算に使う、日本食品標準成分表(八訂)増補2023年のデータをデータベースに登録します。最初に1回だけ行えば、あとは不要です(何度押しても上書きされるだけです)。</p>
+        <p class="input-hint" id="foods-status"></p>
+      </div>
+      <button class="reroll" id="btn-foods-import" style="margin-top:10px;">成分表を登録する</button>
+      <p id="foods-import-msg" class="input-hint" hidden style="text-align:center;"></p>
     </div>
   </div>
 
