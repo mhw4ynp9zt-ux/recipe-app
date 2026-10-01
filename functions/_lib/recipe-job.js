@@ -22,9 +22,9 @@
 export const MAX_ATTEMPTS = 3;                  // 目標に収まらないとき、最大で何回作るか(最初の1回を含む)
 export const MAX_AI_CALLS = MAX_ATTEMPTS + 1;   // 1ジョブでAIを呼べる絶対の上限(引き継ぎで1回無駄になっても超えない)
 const AI_URL = "https://api.x.ai/v1/chat/completions";
-// AIの1回の呼び出しの上限。考える時間が長いモデル(reasoning)は、返答を書き始める前に1分以上考えることがある。
-// 途中で打ち切ると、それまでの分の料金だけかかって結果が得られないため、画面を待たせない(ジョブ方式の)今は長めにする。
-const AI_TIMEOUT_MS = 150000;
+// AIの1回の呼び出しの上限。考える時間が長いモデル(reasoning)は、返答を書き始める前に1分近く考えることがある。
+// 途中で打ち切ると、それまでの分の料金だけかかって結果が得られないため、従来(60秒)より少し長めにする。
+const AI_TIMEOUT_MS = 90000;
 const RETRY_START_LIMIT_MS = 50000;     // 処理を始めてからこれを過ぎていたら、作り直しはせず今ある最良の結果を返す
 const HEARTBEAT_MS = 8000;              // 実行中の印(lease)と進捗をD1へ書く間隔(D1のクエリ数を抑えるため間隔は長め)
 const LEASE_MS = 25000;                 // この時間更新が無ければ「止まった」とみなし、別のリクエストが引き継げる
@@ -61,6 +61,15 @@ async function loadJob(env, id) {
 
 async function loadOwnJob(env, id, userId) {
   const job = await loadJob(env, id);
+  return job && job.user_id === userId ? job : null;
+}
+
+// 状況の取得(1秒ごとに呼ばれる)用。作り直し用の会話(messages)・途中の結果(best)・条件(request)は大きいので読まない
+async function loadJobForState(env, id, userId) {
+  const job = await env.DB.prepare(
+    `SELECT id, user_id, status, stage, progress, attempt, lease_until, created_at, active_ms, error, result, trace
+     FROM recipe_jobs WHERE id = ?`
+  ).bind(id).first();
   return job && job.user_id === userId ? job : null;
 }
 
@@ -191,7 +200,7 @@ async function startJob(env, user, body, deps, now = Date.now()) {
 // ==== 状況の取得(読むだけ。AIは呼ばない) ====
 
 async function getJobState(env, user, jobId, deps, now = Date.now()) {
-  const job = await loadOwnJob(env, jobId, user.id);
+  const job = await loadJobForState(env, jobId, user.id);
   if (!job) return { status: 404, body: { error: "作成中のレシピが見つかりません" } };
   return { status: 200, body: publicState(job, { isAdmin: deps.isAdminUser(env, user), now }) };
 }
@@ -199,7 +208,9 @@ async function getJobState(env, user, jobId, deps, now = Date.now()) {
 // ==== AIの呼び出し(ストリーミング) ====
 
 // 成功: { content } / HTTPエラー: { status, body } / 通信失敗・タイムアウト・空の返答は例外
-// onChars(これまでに受け取った文字数) を受け取るたびに呼ぶ(進捗%の計算用)
+// onChars(これまでに受け取った文字数) を受け取るたびに呼ぶ(進捗%の計算用。ストリーミングのときだけ)
+// deps.stream が true のときだけストリーミングで受け取る。既定は従来どおり(stream指定なし・一度に受け取る)。
+//   ストリーミングにすると、使っているAIによっては完成まで従来より時間がかかることがあったため、既定では使わない。
 // stats(原因調査用): { chars: 受け取った文字数, firstChunkMs: 最初の文字が届くまでの時間, status: HTTPステータス }
 async function callAi(ai, messages, count, deps, onChars, stats = {}) {
   const startedAt = Date.now();
@@ -210,7 +221,7 @@ async function callAi(ai, messages, count, deps, onChars, stats = {}) {
     const res = await doFetch(AI_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + ai.apiKey },
-      body: JSON.stringify({ model: ai.model, max_tokens: deps.maxTokensFor(count), stream: true, messages }),
+      body: JSON.stringify({ model: ai.model, max_tokens: deps.maxTokensFor(count), ...(deps.stream === true ? { stream: true } : {}), messages }),
       signal: controller.signal,
     });
     stats.status = res.status;
@@ -222,8 +233,8 @@ async function callAi(ai, messages, count, deps, onChars, stats = {}) {
     }
 
     const type = (res.headers && res.headers.get && res.headers.get("content-type")) || "";
-    if (!res.body || !type.includes("text/event-stream")) {
-      // ストリーミングで返ってこなかった場合は、従来どおり一度に受け取る
+    if (deps.stream !== true || !res.body || !type.includes("text/event-stream")) {
+      // 通常(一度に受け取る)。ストリーミングを頼んだのに返ってこなかった場合も、ここで受け取る
       const data = await res.json();
       const content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
       if (!content) throw new Error("no text content in response");
@@ -355,8 +366,9 @@ async function runAttempt(env, deps, job, live, { isAdmin, now }) {
   let content;
   let dishes;
   const stats = { chars: 0 };
+  const aiStartedAt = now();
   live.plan = plan;
-  live.aiStartedAt = now();
+  live.aiStartedAt = aiStartedAt;
   live.chars = 0;
   try {
     const r = await callAi(ai, messages, req.count, deps, (chars) => {
@@ -390,6 +402,7 @@ async function runAttempt(env, deps, job, live, { isAdmin, now }) {
   }
 
   // 栄養量は成分表から計算する。失敗してもAIのレシピ自体は返す(利用回数も戻さない)。
+  const aiEndedAt = now();
   live.stage = "nutrition";
   live.progress = Math.max(live.progress, plan.to);
   let nutritionOk = true;
@@ -409,6 +422,11 @@ async function runAttempt(env, deps, job, live, { isAdmin, now }) {
 
   const check = deps.checkTargets(dishes, req.metrics);
   const activeMs = job.active_ms + (now() - stepStart);
+  // 所要時間の内訳(遅いと感じたときの原因調査用)。全体が45秒を超えたら warn にして、管理者のログに必ず残す
+  trace.add("timing", {
+    attempt: n, preAiMs: aiStartedAt - stepStart, aiMs: aiEndedAt - aiStartedAt, nutritionMs: now() - aiEndedAt,
+    firstChunkMs: stats.firstChunkMs, headersMs: stats.headersMs, stream: deps.stream === true, totalActiveMs: activeMs,
+  }, activeMs > 45000 ? "warn" : "info");
   // このあと作り直しに進めるか(上限回数・待ち時間・AI呼び出しの絶対上限)
   const canRetry = n < MAX_ATTEMPTS && activeMs <= RETRY_START_LIMIT_MS && job.ai_calls < MAX_AI_CALLS;
   const retrying = !check.ok && canRetry;
