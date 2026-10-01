@@ -4,7 +4,8 @@
   "scripts": {
     "dev": "wrangler pages dev . --d1=DB",
     "deploy": "wrangler pages deploy .",
-    "test:job": "node test/job_test.mjs && node test/create-ui_job_test.mjs"
+    "test:job": "node test/job_test.mjs && node test/create-ui_job_test.mjs",
+    "test:excluded": "node test/excluded-foods_test.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.0"
