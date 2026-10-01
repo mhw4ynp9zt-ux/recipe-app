@@ -27,9 +27,52 @@
   function hideCreateError(){
     createErrorEl.hidden = true;
   }
-  const CREATE_LOADING_TEXT = 'レシピを考えています…(画面を開いたままお待ちください)';
+  // ==== 作成中の進捗表示 ====
+  // サーバーは1回の通信で結果を返すため、実際の進み具合は分かりません。
+  // そこで経過時間に応じて「いまやっていること」を段階的に表示し、待ち時間を短く感じてもらいます。
+  // バーは100%に近づくほどゆっくり進み(完了前に100%にはならない)、結果が返った時点で100%にします。
+  const CREATE_STEPS = [
+    { label: '食材と条件を整理しています', at: 0 },
+    { label: 'AIがレシピを考えています', at: 3 },
+    { label: '食品成分表で栄養を計算しています', at: 14 },
+    { label: '目標に収まるか確認・調整しています', at: 24 },
+  ];
+  const cpStatusEl = document.getElementById('cp-status');
+  const cpFillEl = document.getElementById('cp-fill');
+  const cpPercentEl = document.getElementById('cp-percent');
+  const cpElapsedEl = document.getElementById('cp-elapsed');
+  const cpStepsEl = document.getElementById('cp-steps');
+  const cpNoteEl = document.getElementById('cp-note');
+  const CP_DEFAULT_NOTE = cpNoteEl.textContent;
+  let cpTimer = null;
+
+  function renderCreateProgress(startedAt){
+    const sec = (Date.now() - startedAt) / 1000;
+    const pct = Math.min(95, 95 * (1 - Math.exp(-sec / 18)));
+    let idx = 0;
+    CREATE_STEPS.forEach((s, i) => { if(sec >= s.at) idx = i; });
+    cpFillEl.style.width = pct.toFixed(1) + '%';
+    cpPercentEl.textContent = Math.floor(pct) + '%';
+    cpElapsedEl.textContent = '経過 ' + Math.floor(sec) + '秒';
+    cpStatusEl.textContent = CREATE_STEPS[idx].label + '…';
+    Array.from(cpStepsEl.children).forEach((li, i) => {
+      li.className = i < idx ? 'done' : (i === idx ? 'active' : '');
+    });
+    if(sec > 40) cpNoteEl.textContent = '少し時間がかかっています。もう少しお待ちください';
+  }
+  function startCreateProgress(){
+    cpStepsEl.innerHTML = CREATE_STEPS.map(s => '<li>' + s.label + '</li>').join('');
+    cpNoteEl.textContent = CP_DEFAULT_NOTE;
+    const startedAt = Date.now();
+    renderCreateProgress(startedAt);
+    cpTimer = setInterval(() => renderCreateProgress(startedAt), 500);
+  }
+  function stopCreateProgress(){
+    if(cpTimer){ clearInterval(cpTimer); cpTimer = null; }
+  }
   function setCreateLoading(isLoading){
-    if(isLoading) createLoadingEl.textContent = CREATE_LOADING_TEXT;
+    stopCreateProgress();
+    if(isLoading) startCreateProgress();
     createLoadingEl.hidden = !isLoading;
     generateBtn.disabled = isLoading;
     generateBtn.style.opacity = isLoading ? '0.6' : '1';
@@ -287,7 +330,7 @@
             request: logContext.request, message: netErr.message,
             elapsedMs: Date.now() - startedAt, wasHidden: wasHidden,
           });
-          createLoadingEl.textContent = '通信が切れたため、もう一度試しています…';
+          cpNoteEl.textContent = '通信が切れたため、もう一度試しています…';
         }
       }
       logContext.status = response.status;
@@ -351,6 +394,7 @@
         recipes.push(recipe);
         return recipe;
       });
+      cpFillEl.style.width = '100%'; cpPercentEl.textContent = '100%';
       renderCreatedCombo(dishes, nutritionOk, data.targetCheck);
     } catch(err){
       logContext.elapsedMs = Date.now() - startedAt;
