@@ -16,6 +16,10 @@ const METRICS = {
   calories: { label: "カロリー",   unit: "kcal", max: 6000 },
 };
 
+// 計算した栄養量が目標値から外れてよい幅(±5%)。これを超えたら、create-recipe.js がAIに作り直させます。
+const TOLERANCE = 0.05;
+const TOLERANCE_EPS = 1e-6; // 5.0000001% のような浮動小数の誤差で不合格にしないための余裕
+
 const ALLOWED_COUNTS = [1, 2, 3];
 const MAX_INGREDIENTS_LEN = 500;
 const MAX_MOOD_LEN = 300;
@@ -56,11 +60,53 @@ function parseCreateRequest(body) {
   return { value: { ingredients, mood, count, metrics } };
 }
 
+function fmtNum(n) {
+  return String(Math.round(n * 10) / 10);
+}
+
+// AIに伝える許容範囲。範囲の内側に丸めて(例: 78g → 74.1〜81.9)、AIがこの範囲に入れれば必ず合格になるようにする。
+function displayRange(target) {
+  return {
+    min: Math.ceil(target * (1 - TOLERANCE) * 10) / 10,
+    max: Math.floor(target * (1 + TOLERANCE) * 10) / 10,
+  };
+}
+
+// 計算済みの dishes(attachNutrition 後)の合計が、各目標の許容範囲(±5%)に入っているかを調べる。
+// 合計は画面のバッジと同じく「各品の値(小数1桁)の足し算を小数1桁に丸めたもの」で比べる。
+// 返り値: { ok, worst(目標からの最大のずれ。%), results: [{ id, label, unit, target, total, min, max, diffPct, ok }] }
+function checkTargets(dishes, metrics) {
+  const results = metrics.map((m) => {
+    const sum = dishes.reduce((s, d) => s + (Number(d[m.id]) || 0), 0);
+    const total = Math.round(sum * 10) / 10;
+    const min = m.target * (1 - TOLERANCE);
+    const max = m.target * (1 + TOLERANCE);
+    return {
+      id: m.id, label: m.label, unit: m.unit, target: m.target,
+      total, min, max,
+      diffPct: ((total - m.target) / m.target) * 100,
+      ok: total >= min - TOLERANCE_EPS && total <= max + TOLERANCE_EPS,
+    };
+  });
+  return {
+    ok: results.every((r) => r.ok),
+    worst: Math.max(0, ...results.map((r) => Math.abs(r.diffPct))),
+    results,
+  };
+}
+
 function buildPrompt(req) {
   const { ingredients, mood, count, metrics } = req;
 
+  const pct = Math.round(TOLERANCE * 100);
   const targetText = metrics.length
-    ? '全' + count + '品の合計で、' + metrics.map(m => m.label + 'を' + m.target + m.unit + '程度').join('、') + 'になるようにしてください(多少の前後は構いませんが、大きく外れないようにしてください)。'
+    ? '全' + count + '品の合計で、次の目標になるようにしてください。\n' +
+      metrics.map(m => {
+        const r = displayRange(m.target);
+        return '・' + m.label + ': ' + m.target + m.unit + '(許容範囲 ' + fmtNum(r.min) + '〜' + fmtNum(r.max) + m.unit + ')';
+      }).join('\n') + '\n' +
+      '各栄養素の合計は、必ず目標値の±' + pct + '%以内(上の許容範囲)に収めてください。範囲を外れた場合は作り直しになります。\n' +
+      '材料の grams を決めるときは、食材ごとの栄養量を日本食品標準成分表の値で概算して合計を確かめ、すべての目標が許容範囲に入るように重さを調整してから出力してください。'
     : '栄養バランスの良い、一般的な家庭料理にしてください。';
   const countText = count === 1
     ? '1品だけで完結する料理にしてください。'
@@ -99,6 +145,50 @@ function buildPrompt(req) {
     '    "steps": ["手順1", "手順2"]\n' +
     '  }\n' +
     ']';
+}
+
+// 目標の許容範囲から外れたときに、AIへ送る「作り直し」の依頼文。
+// 会話の続き(1回目のプロンプト → AIの返答 → この依頼文)として送るので、条件の全文は繰り返さない。
+// dishes は attachNutrition 済み。各食材の ingredientDetails[i].contrib(その食材が各栄養素に寄与した量)があれば内訳に使う。
+function buildRetryPrompt(req, dishes, check) {
+  const pct = Math.round(TOLERANCE * 100);
+  const off = check.results.filter((r) => !r.ok);
+
+  const summary = check.results.map((r) => {
+    const rg = displayRange(r.target);
+    const gap = r.total - r.target;
+    const state = r.ok
+      ? '範囲内(OK)'
+      : (gap > 0 ? '目標より' + fmtNum(gap) + r.unit + '多い' : '目標まであと' + fmtNum(-gap) + r.unit + '足りない');
+    return '・' + r.label + ': 目標' + r.target + r.unit + '(許容 ' + fmtNum(rg.min) + '〜' + fmtNum(rg.max) + r.unit + ')に対し、' +
+      '合計は' + r.total + r.unit + '(' + (r.diffPct > 0 ? '+' : '') + r.diffPct.toFixed(1) + '%)→ ' + state;
+  }).join('\n');
+
+  // 範囲を外れた指標について、料理ごとに「どの食材がどれだけ寄与したか」を示す
+  const detail = dishes.map((dish, i) => {
+    const lines = dish.ingredientDetails
+      .filter((ing) => ing.grams > 0 && ing.contrib)
+      .map((ing) => '  - ' + ing.name + ' ' + ing.grams + 'g: ' +
+        off.map((r) => r.label + ' ' + fmtNum(ing.contrib[r.id] || 0) + r.unit).join('、'));
+    return (i + 1) + '品目「' + dish.name + '」\n' + (lines.length ? lines.join('\n') : '  (内訳なし)');
+  }).join('\n');
+
+  // 成分表と照合できず、計算に入っていない食材(あれば food の表記を直させる)
+  const unmatched = [...new Set(dishes.flatMap((d) => (d.nutritionCheck && d.nutritionCheck.unmatched) || []))];
+  const unmatchedText = unmatched.length
+    ? '\n\n【計算に入っていない食材】\n' + unmatched.map((n) => '・' + n).join('\n') +
+      '\nこれらは成分表の食品と照合できず、上の合計に含まれていません。food を成分表の表記(例: "たまねぎ りん茎 生")に直し、grams も入れてください。'
+    : '';
+
+  return '栄養量をこちらで日本食品標準成分表から計算したところ、目標の±' + pct + '%の許容範囲に収まっていませんでした。\n\n' +
+    '【前回の計算結果】\n' + summary + '\n\n' +
+    '【範囲を外れた栄養素の、食材ごとの内訳】\n' + detail + unmatchedText + '\n\n' +
+    '【やり直しのお願い】\n' +
+    '・上の内訳をもとに、材料の grams を増減して、すべての目標が許容範囲に入るように作り直してください。\n' +
+    '・ある栄養素の調整は他の栄養素にも影響します。範囲内だった栄養素が外れないよう、全体を計算し直してください。\n' +
+    '・料理の方向性はできるだけ保ち、重さの調整で足りないときに限って、食材の追加・入れ替えをしてください。\n' +
+    '・amount の表記も、grams に合わせて直してください。\n' +
+    '・「必ず守る条件」と出力形式は最初の依頼のとおりです。JSON配列のみを出力し、前置き・コードブロック記号はつけないでください。';
 }
 
 // 1回のリクエストで使う出力トークン数の上限(品数が多いほど増やす)。
@@ -180,4 +270,4 @@ function parseDishes(content, req) {
   });
 }
 
-export { parseCreateRequest, buildPrompt, maxTokensFor, parseDishes };
+export { parseCreateRequest, buildPrompt, buildRetryPrompt, checkTargets, maxTokensFor, parseDishes, TOLERANCE };

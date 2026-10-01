@@ -447,15 +447,19 @@ async function attachNutrition(env, dishes, activeIds) {
       ing.match = { foodNo: m.food.foodNo, label: m.food.label };
 
       const ratio = ing.grams / 100;
+      const contrib = {}; // この食材が各栄養素にいくら寄与したか(目標から外れたとき、AIに内訳を伝えるために使う)
       METRIC_IDS.forEach((id) => {
+        contrib[id] = 0;
         if (id === "veg") {
-          if (VEG_GROUPS.includes(row.group_code)) totals.veg += ing.grams;
+          if (VEG_GROUPS.includes(row.group_code)) { totals.veg += ing.grams; contrib.veg = ing.grams; }
           return;
         }
         const v = METRICS[id].get(row);
         if (v == null) { if (activeIds.includes(id)) missing.add(ing.name); } // 成分表に値がない(未測定)。0として扱う
-        else totals[id] += v * ratio;
+        else { totals[id] += v * ratio; contrib[id] = v * ratio; }
       });
+      // enumerable: false にして、画面へ返すJSONや保存済みレシピには含めない(サーバー内だけで使う)
+      Object.defineProperty(ing, "contrib", { value: contrib, enumerable: false, writable: true, configurable: true });
     });
 
     dish.nutrition = {};
