@@ -381,6 +381,11 @@
     cursor:pointer;
   }
   .reroll:active{opacity:.7;}
+  .reroll:disabled{opacity:.5; cursor:default;}
+
+  /* 管理者向けエラーログ(js/error-log.js)。「作る」タブのエラー表示の下に出るダウンロード欄 */
+  .log-box{margin:0 0 16px; text-align:center;}
+  .log-box .log-btn{margin-top:8px;}
 
   .note{
     text-align:center;
