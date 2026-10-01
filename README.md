@@ -10,11 +10,13 @@ css/style.css                    スタイル
 db/schema.sql                    D1のテーブル定義(初回)
 db/migration-002-ai-settings.sql AI設定用テーブルの追加分(app_settings、ai_usage_daily)
 db/migration-003-foods.sql       日本食品標準成分表のテーブル定義(foods、food_groups、nutrient_defs)
-db/seed-foods.sql                成分表のデータ(2,538食品。scripts/build_foods_sql.py が文科省のExcelから生成)
+db/seed-foods.sql                成分表のデータ(wrangler用。2,538食品。scripts/build_foods_sql.py が文科省のExcelから生成)
+data/foods.json                  成分表のデータ(ブラウザ取り込み用)
 scripts/build_foods_sql.py       成分表のExcel → 上の2つのSQLを作るスクリプト
 js/
   config.js                      栄養指標の定義(NUTRIENT_METRICS)
   utils.js                       共通関数
+  error-log.js                   管理者向けエラーログ(記録・ダウンロード)。他のファイルの失敗もここに集まる
   save.js                        保存済みレシピの読み書き(ログイン中はサーバー、未ログインはlocalStorage)
   auth.js                        パスキーの登録・ログイン・ログアウトと、ログイン状態の管理
   settings.js                    管理者用のAI設定欄(管理者のときだけ表示)
@@ -26,11 +28,13 @@ functions/_lib/
   crypto.js                      APIキーの暗号化・復号(AES-GCM)
   app-settings.js                AI設定の読み書き、1日の利用回数の確保・払い戻し
   recipe-prompt.js               リクエスト検証・プロンプト組み立て・AI返答の検証
+  debug-trace.js                 管理者だけに返すデバッグ情報(失敗の詳細)の収集と、APIキーの伏せ字処理
   nutrition.js                   AIが返した食材を成分表に照合し、栄養量を計算
+  foods-import.js / foods-schema.js  成分表の取り込み処理とテーブル定義(foods-schemaは自動生成)
 functions/api/auth/              認証API 6本(register-options / register-verify / login-options / login-verify / logout / me)
 functions/api/recipes.js         レシピ一覧取得・保存
 functions/api/recipes/[id].js    レシピ削除
-functions/api/admin/             管理者専用API(ai-settings.js、ai-test.js)
+functions/api/admin/             管理者専用API(ai-settings.js、ai-test.js、import-foods.js)
 functions/api/ai/create-recipe.js  ログインユーザー向けAIレシピ作成
 ```
 
@@ -39,6 +43,7 @@ functions/api/ai/create-recipe.js  ログインユーザー向けAIレシピ作�
 - **認証**: パスキー(WebAuthn)のみ。ユーザー名の入力はなく、1ユーザー1パスキー。ログイン中は新規登録できない。
 - **管理者**: Secret `ADMIN_USER_ID` に指定したユーザーIDの1人だけ。未設定なら誰も管理者にならない。
 - **AI設定**: APIキー・モデル・1日の上限は管理者だけが設定できる。APIキーはAES-GCMで暗号化してD1に保存し、ブラウザには返さない。
+- **エラーログ(管理者のみ)**: 画面でエラーが起きると、管理者には「ログをダウンロード」ボタンが出ます(「作る」タブのエラー表示の下と、「設定」タブの管理者欄)。詳細は下の「エラーログ」を参照。
 - **AIの利用**: ログインユーザーのみ。呼び出しはサーバーが行い、プロンプトもサーバーで組み立てる。アプリ全体で1日の利用回数に上限がある(初期値50回、日本時間で毎日リセット)。失敗した回は回数に数えない。
 
 ## 設定手順
@@ -52,12 +57,16 @@ npx wrangler d1 execute recipe-app-db --file=./db/migration-002-ai-settings.sql 
 
 ### 1-2. 成分表のデータを入れる(栄養計算に必要)
 AIが返したレシピの栄養量は、日本食品標準成分表(八訂)増補2023年をD1に入れたデータから計算します。**このデータが無いと、栄養量が表示されません**(レシピ自体は表示されます)。
+
+**方法A(ブラウザだけ・おすすめ)**: デプロイ後、アプリの「設定」タブで管理者としてログインすると、「成分表の登録(管理者のみ)」欄が出ます。「成分表を登録する」を押すと、2,538件を100件ずつ自動で登録します(ターミナル不要)。「登録数: 2538 件」と出れば完了です。何度押しても上書きされるだけです。
+
+**方法B(wrangler)**:
 ```
 npx wrangler d1 execute recipe-app-db --file=./db/migration-003-foods.sql --remote
 npx wrangler d1 execute recipe-app-db --file=./db/seed-foods.sql --remote
 npx wrangler d1 execute recipe-app-db --remote --command "SELECT COUNT(*) FROM foods"   # 2538 と出ればOK
 ```
-`seed-foods.sql` は何度流しても同じ結果になります(成分表が改訂されたら、新しいExcelで `python3 scripts/build_foods_sql.py 食品データ.xlsx` を実行して作り直し、流し直します。反映までに最大10分かかります)。
+成分表が改訂されたら、新しいExcelで `python3 scripts/build_foods_sql.py 食品データ.xlsx` を実行して `data/foods.json` などを作り直し、もう一度取り込みます(反映までに最大10分かかります)。
 仕組みと前提は `NUTRITION.md` を参照してください。
 
 ### 2. Secretを2つ設定する(デプロイより前に)
@@ -85,6 +94,19 @@ npx wrangler pages deploy .
 2. APIキーを入力して「接続テスト・モデルを取得」→ モデルを選択 →「設定を保存」
 3. 別のブラウザやシークレットウィンドウで新規登録し、「設定」タブにAI設定が**出ない**ことを確認
 4. そのユーザーで「作る」タブからレシピが作れることを確認
+5. エラーログの確認: 管理者でログインし、機内モード(通信オフ)で「レシピを作成する」を押すと、エラー表示の下に「ログをダウンロード」が出て、押すとJSONが保存されることを確認。同じ操作を一般ユーザーで行っても、ボタンが**出ない**ことを確認
+
+## エラーログ(管理者のみ)
+
+管理者でログインしているとき、処理でエラーが起きると、その内容をJSONファイルとしてダウンロードできます。原因の調査(このファイルを共有して相談するなど)に使えます。
+
+- **ボタンの場所**: 「作る」タブのエラー表示の下(エラーが1件以上あるとき)と、「設定」タブの「エラーログ(管理者のみ)」欄(件数の確認・ダウンロード・消去)。一般ユーザーには出ません。
+- **記録されるもの**: AIレシピ作成の失敗(リクエスト内容・HTTPステータス・サーバーが返した原因)、管理者用API(接続テスト・AI設定の保存・成分表の登録)の失敗、パスキーのログイン・登録の失敗、保存・削除・一覧取得の失敗、予期しないJavaScriptエラー、スクリプトの読み込み失敗。ユーザー自身によるパスキー操作のキャンセルは記録しません。
+- **成功したのに問題があった場合も記録されます**: AIの作り直しの失敗、栄養計算の失敗、目標の±5%に収まらなかった、など(レベル `warn`)。
+- **サーバー側の詳細**: AIレシピ作成APIは、管理者のリクエストにだけ、レスポンスの `debug`(どの段階で何が起きたかの時系列。xAIのエラー本文、AIの返答の先頭など)を付けます。管理者用APIは、失敗時に `detail` を返します。管理者かどうかの判定はサーバー側(`ADMIN_USER_ID`)で行うので、一般ユーザーには一切返りません。
+- **APIキーは記録されません**: `xai-...` の形や `Bearer ...`、`apiKey` などの名前の項目は `[REDACTED]` に置き換えます。管理者用APIへ送った内容(APIキーを入力して保存した本文など)は、そもそも記録しません。
+- **保存先はこの端末のメモリだけ**です。サーバーには送りません。ページを閉じる・再読み込みするとログは消え、ログアウトしたときも消えます(共有の端末にログを残さないため)。
+- ファイル名は `recipe-app-log-年月日-時分秒.json` です。
 
 ## 実装のポイント
 
