@@ -223,10 +223,6 @@
   async function generateRecipe(){
     const ingredientsRaw = document.getElementById('create-ingredients').value.trim();
     const moodRaw = document.getElementById('create-mood').value.trim();
-    if(!ingredientsRaw){
-      showCreateError('食材を1つ以上入力してください。');
-      return;
-    }
     if(!isLoggedIn()){
       showCreateError('AIでレシピを作成するには、「設定」タブからパスキーでログインしてください。');
       return;
