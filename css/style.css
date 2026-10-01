@@ -1,0 +1,860 @@
+/* ==========================================================
+   コンダテ — スタイル
+   テーマ: 生成りの紙 × 深い緑 × 栄養指標ごとの色(献立ノートの雰囲気)
+   ========================================================== */
+/* ヘッダーのロゴ用フォント(Zen Maru Gothic の極太) */
+@import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@900&display=swap');
+
+:root{
+  color-scheme: only light;
+
+  /* ベース */
+  --bg:#F4F1E8;          /* 生成りの紙 */
+  --bg-deep:#ECE7DA;     /* 画面外側・押した時 */
+  --card:#FFFDF8;
+  --ink:#1B2A20;
+  --ink-soft:#56645A;
+  --ink-faint:#8A958C;
+  --line:#E2DCCD;
+  --line-strong:#CFC7B4;
+
+  /* ブランド */
+  --brand:#2F5D3A;       /* 深い緑(主ボタン・選択中) */
+  --brand-ink:#FFFFFF;
+  --brand-soft:#E3ECDF;
+  --accent:#D9643F;      /* トマト色(保存・バッジ) */
+  --accent-soft:#FBE6DD;
+
+  /* 栄養指標の色(JSから var(--protein) / var(--veg) も参照される) */
+  --protein:#B24630;  --protein-bg:#F7E4DD;
+  --veg:#4C7A3D;      --veg-bg:#E5EEDD;
+  --fat:#B8722A;      --fat-bg:#F6E6D2;
+  --salt:#4A6D8C;     --salt-bg:#E2EAF1;
+  --fiber:#3F8272;    --fiber-bg:#DFEDE8;
+  --carbs:#9A7D1F;    --carbs-bg:#F3EBCF;
+  --calories:#8C5A82; --calories-bg:#F0E2EC;
+
+  --warn:#8A5A00;     --warn-bg:#FFF4DE;
+  --danger:#B24630;   --danger-bg:#FBE9E4;
+
+  --radius:20px;
+  --radius-sm:12px;
+  --shadow:0 1px 2px rgba(40,50,30,.05), 0 6px 20px -12px rgba(40,50,30,.25);
+  --tabbar-h:62px;
+  --serif:'Shippori Mincho', serif;
+  --logo:'Zen Maru Gothic', 'Zen Kaku Gothic New', system-ui, sans-serif;
+}
+
+*{box-sizing:border-box;}
+html{color-scheme: only light; background:var(--bg-deep); -webkit-text-size-adjust:100%;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--bg-deep);
+  font-family:'Zen Kaku Gothic New', system-ui, sans-serif;
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  -webkit-tap-highlight-color:transparent;
+}
+[hidden]{display:none !important;}
+button{font-family:inherit; color:inherit;}
+:focus-visible{outline:3px solid rgba(47,93,58,.35); outline-offset:2px;}
+
+/* 画面には出さず、読み上げだけに使うラベル */
+.visually-hidden{
+  position:absolute;
+  width:1px; height:1px;
+  margin:-1px; padding:0;
+  overflow:hidden;
+  clip:rect(0 0 0 0);
+  white-space:nowrap;
+  border:0;
+}
+
+.app{
+  max-width:560px;
+  margin:0 auto;
+  background:var(--bg);
+  min-height:100vh;
+  min-height:100dvh;
+  padding:calc(env(safe-area-inset-top) + 22px) 16px calc(env(safe-area-inset-bottom) + var(--tabbar-h) + 32px);
+}
+
+/* ---------- ヘッダー(深緑のバナー + 白抜きのロゴ) ---------- */
+.hero{
+  position:relative;
+  overflow:hidden;
+  margin:4px 0 20px;
+  padding:26px 20px 22px;
+  background:var(--brand);
+  color:#fff;
+  border-radius:18px;
+}
+/* ロゴの上の小さな英字 */
+.hero::before{
+  content:"KONDATE";
+  position:relative;
+  display:block;
+  margin:0 0 8px;
+  font-size:11px; font-weight:700; letter-spacing:.3em;
+  opacity:.7;
+}
+.brand{
+  display:block;
+  margin:0 0 12px;
+  font-family:var(--logo);
+  font-weight:900;
+  font-size:clamp(44px, 15vw, 60px);
+  line-height:1.1;
+  letter-spacing:.08em;
+  color:#fff;
+}
+/* 的のマークは、バナーの右下に大きく薄く敷く */
+.brand-mark{
+  position:absolute;
+  right:-40px; bottom:-70px;
+  width:230px; height:230px;
+  opacity:.1;
+  pointer-events:none;
+}
+.brand-mark circle{stroke-width:.8;}
+/* 見出し(h1)は画面には出さず、読み上げ用に残す */
+.hero h1{
+  position:absolute;
+  width:1px; height:1px;
+  margin:-1px; padding:0;
+  overflow:hidden;
+  clip:rect(0 0 0 0);
+  white-space:nowrap;
+  border:0;
+}
+.hero-lead{
+  position:relative;
+  margin:0;
+  font-size:13.5px;
+  line-height:1.75;
+  color:rgba(255,255,255,.88);
+}
+
+/* ---------- 下部のタブバー(親指で届く位置) ---------- */
+.view-tabs{
+  position:fixed;
+  left:0; right:0; bottom:0;
+  z-index:20;
+  display:flex;
+  max-width:560px;
+  margin:0 auto;
+  padding:6px 10px calc(env(safe-area-inset-bottom) + 6px);
+  background:rgba(255,253,248,.92);
+  -webkit-backdrop-filter:saturate(1.4) blur(14px);
+  backdrop-filter:saturate(1.4) blur(14px);
+  border-top:1px solid var(--line);
+}
+.view-tab{
+  flex:1;
+  position:relative;
+  display:flex; flex-direction:column; align-items:center; gap:3px;
+  padding:6px 0 4px;
+  min-height:var(--tabbar-h);
+  justify-content:center;
+  border:none;
+  border-radius:14px;
+  background:transparent;
+  font-size:11.5px;
+  font-weight:700;
+  color:var(--ink-faint);
+  cursor:pointer;
+  transition:color .15s;
+}
+.view-tab svg{
+  width:24px; height:24px;
+  fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round;
+  transition:transform .2s;
+}
+.view-tab.active{color:var(--brand);}
+.view-tab.active svg{fill:var(--brand-soft); transform:translateY(-1px);}
+.view-tab:active{background:var(--bg-deep);}
+.saved-count{
+  position:absolute;
+  top:4px; left:calc(50% + 6px);
+  min-width:18px; height:18px;
+  padding:0 5px;
+  border-radius:100px;
+  background:var(--accent);
+  color:#fff;
+  font-size:10.5px; line-height:18px; font-weight:700;
+  text-align:center;
+  box-shadow:0 0 0 2px var(--card);
+}
+
+/* ---------- パネル(カード) ---------- */
+.panel{
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:18px 18px 20px;
+  margin-bottom:14px;
+  box-shadow:var(--shadow);
+}
+.panel > .input-hint:first-child{margin-top:0;}
+.panel-head{display:flex; align-items:center; gap:8px; margin-bottom:6px;}
+.panel-head h3{margin:0; font-size:15px; font-weight:700; flex:1;}
+.admin-tag{
+  font-size:11px; font-weight:700;
+  padding:3px 9px; border-radius:100px;
+  background:var(--bg-deep); color:var(--ink-soft);
+}
+.view-title{
+  font-family:var(--serif);
+  font-size:20px;
+  margin:6px 2px 12px;
+}
+#admin-section .view-title{margin-top:28px;}
+
+/* ステップ見出し */
+.step-head{display:flex; align-items:center; gap:10px; margin-bottom:12px;}
+.step-head h2{margin:0; font-size:16px; font-weight:700; flex:1;}
+.step-num{
+  flex:0 0 auto;
+  width:26px; height:26px;
+  border-radius:50%;
+  display:grid; place-items:center;
+  background:var(--brand); color:var(--brand-ink);
+  font-family:var(--serif); font-weight:800; font-size:14px;
+}
+.step-tag{font-size:11.5px; color:var(--ink-faint); font-weight:500;}
+.step-lead{margin:-2px 0 12px;}
+
+/* ---------- 入力 ---------- */
+.field{margin-top:14px;}
+.field:first-of-type{margin-top:0;}
+.step-head + .field{margin-top:0;}
+.field label, .option-label{
+  display:block;
+  font-size:13px;
+  font-weight:700;
+  margin-bottom:7px;
+  color:var(--ink);
+}
+input[type="text"], input[type="search"], input[type="password"], input[type="number"], select{
+  width:100%;
+  font-family:inherit;
+  font-size:16px;              /* 16px未満だとiPhoneで入力時に画面が拡大されるため */
+  padding:12px 14px;
+  border-radius:var(--radius-sm);
+  border:1.5px solid var(--line);
+  background:var(--bg);
+  color:var(--ink);
+  outline:none;
+  transition:border-color .15s, background .15s, box-shadow .15s;
+  -webkit-appearance:none;
+  appearance:none;
+}
+input::placeholder{color:var(--ink-faint);}
+input:focus, select:focus{
+  border-color:var(--brand);
+  background:#fff;
+  box-shadow:0 0 0 4px rgba(47,93,58,.12);
+}
+select{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2356645A' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;
+  background-position:right 12px center;
+  background-size:18px;
+  padding-right:40px;
+}
+.input-hint{
+  font-size:12px;
+  color:var(--ink-soft);
+  margin:7px 0 0;
+  line-height:1.65;
+}
+
+/* ---------- 栄養指標のチップ ---------- */
+.metric-toggle-row{display:flex; flex-wrap:wrap; gap:8px;}
+.metric-toggle-btn{
+  --c:var(--brand); --c-bg:var(--brand-soft);
+  display:inline-flex; align-items:center; gap:6px;
+  min-height:38px;
+  padding:7px 14px 7px 11px;
+  border-radius:100px;
+  border:1.5px solid var(--line);
+  background:var(--card);
+  color:var(--ink-soft);
+  font-size:13px;
+  font-weight:700;
+  cursor:pointer;
+  transition:background .15s, border-color .15s, color .15s;
+}
+.metric-toggle-btn::before{
+  content:"";
+  width:14px; height:14px;
+  border-radius:50%;
+  border:1.5px solid var(--line-strong);
+  background:transparent;
+  transition:inherit;
+}
+.metric-toggle-btn.active{
+  background:var(--c-bg);
+  border-color:var(--c);
+  color:var(--c);
+}
+.metric-toggle-btn.active::before{
+  border-color:var(--c);
+  background:var(--c) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 12 4 4 8-8'/%3E%3C/svg%3E") center/10px no-repeat;
+}
+.metric-toggle-btn:active{transform:scale(.97);}
+
+/* 指標ごとの色(チップ・目標入力・バッジで共通) */
+.m-protein {--c:var(--protein);  --c-bg:var(--protein-bg);}
+.m-veg     {--c:var(--veg);      --c-bg:var(--veg-bg);}
+.m-fat     {--c:var(--fat);      --c-bg:var(--fat-bg);}
+.m-salt    {--c:var(--salt);     --c-bg:var(--salt-bg);}
+.m-fiber   {--c:var(--fiber);    --c-bg:var(--fiber-bg);}
+.m-carbs   {--c:var(--carbs);    --c-bg:var(--carbs-bg);}
+.m-calories{--c:var(--calories); --c-bg:var(--calories-bg);}
+
+/* ---------- 目標値の入力 ---------- */
+.target-row{
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));
+  gap:10px;
+  margin-top:14px;
+}
+.target-row:empty{display:none;}
+.target-item{
+  background:var(--c-bg, var(--brand-soft));
+  border-radius:var(--radius-sm);
+  padding:10px 12px 12px;
+}
+.target-item .option-label{
+  color:var(--c, var(--brand));
+  font-size:12.5px;
+  margin-bottom:6px;
+}
+.target-input{position:relative;}
+.target-input input{
+  background:var(--card);
+  border-color:transparent;
+  padding-right:48px;
+  font-weight:700;
+  font-variant-numeric:tabular-nums;
+  -moz-appearance:textfield;
+}
+.target-input input:focus{border-color:var(--c, var(--brand)); box-shadow:none;}
+.target-input input::-webkit-outer-spin-button,
+.target-input input::-webkit-inner-spin-button{-webkit-appearance:none; margin:0;}
+.target-unit{
+  position:absolute; right:12px; top:50%; transform:translateY(-50%);
+  font-size:12.5px; color:var(--ink-soft); pointer-events:none;
+}
+
+/* ---------- 品数(セグメント) ---------- */
+.count-toggle{
+  display:flex;
+  padding:4px;
+  gap:4px;
+  background:var(--bg-deep);
+  border-radius:14px;
+}
+.toggle-btn{
+  flex:1;
+  min-height:42px;
+  border:none;
+  border-radius:10px;
+  background:transparent;
+  color:var(--ink-soft);
+  font-size:14.5px;
+  font-weight:700;
+  cursor:pointer;
+  transition:background .15s, color .15s, box-shadow .15s;
+}
+.toggle-btn.active{
+  background:var(--card);
+  color:var(--brand);
+  box-shadow:0 1px 3px rgba(40,50,30,.15);
+}
+
+/* ---------- ボタン ---------- */
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  width:100%;
+  min-height:48px;
+  padding:12px 18px;
+  border-radius:100px;
+  border:1.5px solid transparent;
+  font-size:15px;
+  font-weight:700;
+  cursor:pointer;
+  transition:transform .1s, opacity .15s, background .15s;
+  text-decoration:none;
+}
+.btn:active{transform:scale(.98);}
+.btn:disabled{opacity:.5; cursor:default; transform:none;}
+.btn-primary{background:var(--brand); color:var(--brand-ink); box-shadow:0 6px 16px -8px rgba(47,93,58,.7);}
+.btn-secondary{background:var(--card); border-color:var(--line-strong); color:var(--ink);}
+.btn-ghost{background:transparent; color:var(--ink-soft); border-color:var(--line);}
+.btn-small{width:auto; min-height:38px; padding:8px 16px; font-size:13px;}
+.btn-stack{display:flex; flex-direction:column; gap:10px; margin-top:16px;}
+.btn-row{display:flex; gap:10px; margin-top:14px;}
+.btn-row .btn{flex:1;}
+
+/* 旧クラス名(.reroll)が残っていても崩れないように */
+.reroll{
+  display:flex; align-items:center; justify-content:center;
+  width:100%; min-height:48px; padding:12px;
+  border-radius:100px; border:1.5px solid var(--line-strong);
+  background:var(--card); color:var(--ink);
+  font-size:15px; font-weight:700; cursor:pointer;
+}
+.reroll:disabled{opacity:.5;}
+
+/* 作成ボタンのまわり */
+.generate-area{margin:20px 0 16px;}
+.summary-line{
+  margin:0 4px 10px;
+  font-size:12.5px;
+  line-height:1.65;
+  color:var(--ink-soft);
+  text-align:center;
+}
+.summary-line:empty{display:none;}
+.btn-generate{min-height:56px; font-size:16.5px; letter-spacing:.04em;}
+.btn-generate:disabled{opacity:.75;}
+
+/* ---------- お知らせ・状態表示 ---------- */
+.notice{
+  display:flex; align-items:center; gap:12px;
+  padding:14px 14px 14px 16px;
+  margin-bottom:14px;
+  border-radius:var(--radius-sm);
+  background:var(--brand-soft);
+  border:1px solid rgba(47,93,58,.18);
+}
+.notice p{margin:0; flex:1; font-size:13px; line-height:1.6; color:var(--ink);}
+.notice strong{color:var(--brand);}
+.notice .btn{flex:0 0 auto; background:var(--brand); color:#fff;}
+
+.alert{
+  margin:0 0 16px;
+  padding:12px 14px;
+  border-radius:var(--radius-sm);
+  font-size:13.5px;
+  line-height:1.65;
+}
+.alert-error{background:var(--danger-bg); color:var(--danger); border:1px solid rgba(178,70,48,.2);}
+
+.loading-card{
+  display:flex; align-items:center; gap:14px;
+  padding:16px 18px;
+  margin-bottom:16px;
+  border-radius:var(--radius);
+  background:var(--card);
+  border:1px solid var(--line);
+  box-shadow:var(--shadow);
+}
+.loading-card .loading-title{margin:0; font-size:14px; font-weight:700; line-height:1.6;}
+.loading-card .input-hint{margin-top:2px;}
+.loading-card .input-hint:empty{display:none;}
+.spinner{
+  flex:0 0 auto;
+  width:30px; height:30px;
+  border-radius:50%;
+  border:3px solid var(--brand-soft);
+  border-top-color:var(--brand);
+  animation:spin .9s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+.status-line{
+  margin:12px 0 0;
+  padding:10px 12px;
+  border-radius:var(--radius-sm);
+  background:var(--bg);
+  font-size:12.5px;
+  line-height:1.6;
+  text-align:center;
+}
+.stat-line{
+  margin:12px 0 0;
+  font-size:13px;
+  font-weight:700;
+  color:var(--ink);
+}
+.stat-line:empty{display:none;}
+
+/* 管理者向けエラーログ(js/error-log.js)。「作る」タブのエラー表示の下に出るダウンロード欄 */
+.log-box{
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  margin:0 0 16px;
+  padding:10px 12px;
+  border-radius:var(--radius-sm);
+  border:1px dashed var(--line-strong);
+}
+.log-box .input-hint{margin:0;}
+
+/* ---------- レシピの結果 ---------- */
+.result{margin-top:4px; scroll-margin-top:16px;}
+.recipe-card{
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:20px 18px 22px;
+  box-shadow:var(--shadow);
+  animation:rise .4s cubic-bezier(.2,.7,.3,1);
+}
+@keyframes rise{
+  from{opacity:0; transform:translateY(12px);}
+  to{opacity:1; transform:translateY(0);}
+}
+.recipe-tag{
+  display:flex; align-items:center; gap:6px;
+  font-size:12px;
+  font-weight:700;
+  color:var(--ink-soft);
+  margin:0 0 10px;
+}
+.recipe-tag::before{
+  content:""; width:8px; height:8px; border-radius:50%; background:var(--accent);
+}
+
+/* 合計の栄養タイル */
+.badges{
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(96px, 1fr));
+  gap:8px;
+  margin-bottom:14px;
+}
+.badge{
+  --c:var(--brand); --c-bg:var(--brand-soft);
+  display:flex; flex-direction:column; gap:2px;
+  padding:9px 11px 10px;
+  border-radius:var(--radius-sm);
+  background:var(--c-bg);
+  color:var(--c);
+  border:1.5px solid transparent;
+}
+.badge-label{font-size:11px; font-weight:700; opacity:.9;}
+.badge-val{font-size:19px; font-weight:700; line-height:1.2; font-variant-numeric:tabular-nums; color:var(--ink);}
+.badge-val small{font-size:11.5px; font-weight:700; color:var(--ink-soft); margin-left:2px;}
+.badge.protein {--c:var(--protein);  --c-bg:var(--protein-bg);}
+.badge.veg     {--c:var(--veg);      --c-bg:var(--veg-bg);}
+.badge.fat     {--c:var(--fat);      --c-bg:var(--fat-bg);}
+.badge.salt    {--c:var(--salt);     --c-bg:var(--salt-bg);}
+.badge.fiber   {--c:var(--fiber);    --c-bg:var(--fiber-bg);}
+.badge.carbs   {--c:var(--carbs);    --c-bg:var(--carbs-bg);}
+.badge.calories{--c:var(--calories); --c-bg:var(--calories-bg);}
+/* 目標の±5%に収まらなかった指標 */
+.badge.off{border-color:var(--c); border-style:dashed; background:var(--card);}
+.badge.off .badge-label::after{content:" ・目標外"; color:var(--warn);}
+
+.target-check{
+  display:flex; align-items:center; gap:6px;
+  margin:0 0 6px;
+  padding:8px 12px;
+  border-radius:var(--radius-sm);
+  background:var(--veg-bg);
+  color:var(--veg);
+  font-size:12.5px;
+  font-weight:700;
+}
+
+.recipe-card h3{
+  display:flex; align-items:center; gap:8px;
+  font-size:13px;
+  font-weight:700;
+  letter-spacing:.06em;
+  margin:0 0 10px;
+  color:var(--ink-soft);
+}
+.recipe-card h3::after, .saved-body h3::after{
+  content:""; flex:1; height:1px; background:var(--line);
+}
+
+.dish-block{
+  margin-top:18px;
+  padding-top:20px;
+  border-top:1px solid var(--line);
+}
+.dish-head{display:flex; align-items:flex-start; gap:8px; margin-bottom:6px;}
+.dish-head h2{
+  font-family:var(--serif);
+  font-size:21px;
+  line-height:1.4;
+  margin:0;
+  flex:1; min-width:0;
+}
+.dish-num{
+  display:inline-grid; place-items:center;
+  width:22px; height:22px; margin-right:6px;
+  border-radius:50%;
+  background:var(--ink); color:var(--card);
+  font-family:'Zen Kaku Gothic New', sans-serif;
+  font-size:12px; font-weight:700;
+  vertical-align:3px;
+}
+.dish-type-tag{
+  flex:0 0 auto;
+  margin-top:4px;
+  font-size:11.5px;
+  font-weight:700;
+  padding:3px 10px;
+  border-radius:100px;
+  background:var(--accent-soft);
+  color:var(--accent);
+  white-space:nowrap;
+}
+.dish-macro, .saved-macro{
+  font-size:12.5px;
+  color:var(--ink-soft);
+  margin:0 0 12px;
+  line-height:1.6;
+}
+
+.save-btn{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  min-height:38px;
+  margin:4px 0 18px;
+  padding:7px 16px;
+  border-radius:100px;
+  border:1.5px solid var(--accent);
+  background:var(--card);
+  color:var(--accent);
+  font-size:13px;
+  font-weight:700;
+  cursor:pointer;
+  transition:background .15s, color .15s;
+}
+.save-btn.saved{background:var(--accent); color:#fff;}
+.save-btn:active{transform:scale(.97);}
+
+.ingredients{margin-bottom:20px;}
+.ingredients ul{margin:0; padding:0; list-style:none;}
+.ingredients li{
+  font-size:14px;
+  line-height:1.55;
+  color:var(--ink);
+  padding:8px 2px;
+  border-bottom:1px dashed var(--line);
+}
+.ingredients li:last-child{border-bottom:none;}
+
+.steps{margin-bottom:8px;}
+.steps ol{margin:0; padding:0; list-style:none; counter-reset:step;}
+.steps li{
+  counter-increment:step;
+  position:relative;
+  padding:0 0 14px 38px;
+  font-size:14.5px;
+  line-height:1.8;
+  color:var(--ink);
+}
+.steps li::before{
+  content:counter(step);
+  position:absolute; left:0; top:2px;
+  width:26px; height:26px;
+  border-radius:50%;
+  display:grid; place-items:center;
+  background:var(--brand-soft);
+  color:var(--brand);
+  font-size:13px; font-weight:700;
+}
+.steps li:not(:last-child)::after{
+  content:"";
+  position:absolute; left:12.5px; top:32px; bottom:4px;
+  width:1px; background:var(--line);
+}
+
+.result-actions{margin-top:20px; padding-top:18px; border-top:1px solid var(--line);}
+
+.note{
+  text-align:center;
+  font-size:11.5px;
+  color:var(--ink-faint);
+  margin:18px 8px 0;
+  line-height:1.7;
+}
+
+/* ---------- 栄養の計算内訳(成分表から計算した値の根拠) ---------- */
+.nutrition-warn{
+  margin:0 0 12px; padding:10px 12px; border-radius:var(--radius-sm);
+  background:var(--warn-bg); color:var(--warn); font-size:12.5px; line-height:1.65;
+}
+.nutrition-detail{
+  margin-top:10px;
+  border-radius:var(--radius-sm);
+  background:var(--bg);
+  font-size:13px;
+}
+.nutrition-detail summary{
+  list-style:none;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:12px 14px;
+  cursor:pointer;
+  font-weight:700;
+  color:var(--ink-soft);
+}
+.nutrition-detail summary::-webkit-details-marker{display:none;}
+.nutrition-detail summary::after, .saved-card > summary .chev{
+  content:"";
+  width:8px; height:8px;
+  border-right:2px solid currentColor; border-bottom:2px solid currentColor;
+  transform:rotate(45deg) translateY(-2px);
+  transition:transform .2s;
+}
+.nutrition-detail[open] summary::after{transform:rotate(-135deg) translateY(-2px);}
+.nutrition-detail > :not(summary){margin-left:14px; margin-right:14px;}
+.nutrition-detail ul{list-style:none; margin:6px 14px 0; padding:0;}
+.nutrition-detail li{display:flex; gap:6px; padding:7px 0; border-top:1px dashed var(--line); line-height:1.5;}
+.nd-name{flex:0 0 42%; font-weight:700;}
+.nd-arrow{flex:0 0 auto; color:var(--ink-faint);}
+.nd-food{flex:1 1 auto; word-break:break-all; color:var(--ink-soft);}
+.nd-miss{color:#b45309;}
+.nd-skip{color:var(--ink-faint);}
+.nd-total{margin:0 14px 4px; font-size:12px; line-height:1.7; color:var(--ink);}
+.nd-note{margin:8px 14px 0; padding-bottom:12px; font-size:11px; color:var(--ink-faint); line-height:1.6;}
+
+/* ---------- 保存済み ---------- */
+.empty-state{
+  text-align:center;
+  padding:40px 20px 32px;
+  background:var(--card);
+  border:1px dashed var(--line-strong);
+  border-radius:var(--radius);
+}
+.empty-state svg{
+  width:64px; height:64px; margin-bottom:10px;
+  fill:none; stroke:var(--line-strong); stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round;
+}
+.empty-title{margin:0 0 4px; font-weight:700; font-size:15px;}
+.empty-state .btn{margin-top:16px;}
+
+/* 保存済みの検索欄(レシピ名・食材で絞り込み) */
+.saved-search{margin:0 0 14px;}
+.search-box{position:relative;}
+.search-box input{padding-left:42px; padding-right:44px;}
+.search-box input[type="search"]::-webkit-search-cancel-button,
+.search-box input[type="search"]::-webkit-search-decoration{
+  -webkit-appearance:none; appearance:none; display:none;
+}
+.search-icon{
+  position:absolute; left:14px; top:50%; transform:translateY(-50%);
+  width:18px; height:18px;
+  fill:none; stroke:var(--ink-faint); stroke-width:2; stroke-linecap:round; stroke-linejoin:round;
+  pointer-events:none;
+}
+.search-clear{
+  position:absolute; right:5px; top:50%; transform:translateY(-50%);
+  width:38px; height:38px;
+  display:grid; place-items:center;
+  border:none; border-radius:50%;
+  background:transparent;
+  color:var(--ink-faint);
+  cursor:pointer;
+}
+.search-clear svg{width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:2.2; stroke-linecap:round;}
+.search-clear:active{background:var(--bg-deep);}
+.saved-search .input-hint{margin:8px 4px 0;}
+.saved-search .input-hint:empty{display:none;}
+.saved-no-match{
+  margin:0 0 12px;
+  padding:28px 20px;
+  text-align:center;
+  background:var(--card);
+  border:1px dashed var(--line-strong);
+  border-radius:var(--radius);
+  font-size:13.5px;
+  line-height:1.7;
+  color:var(--ink-soft);
+  overflow-wrap:anywhere;
+}
+
+.saved-list{display:flex; flex-direction:column; gap:12px;}
+.saved-card{
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  overflow:hidden;
+}
+/* ※「>」でカード自身の見出しだけに効かせる(中の「栄養の計算内訳」のsummaryには効かせない) */
+.saved-card > summary{
+  list-style:none;
+  position:relative;
+  padding:16px 44px 14px 18px;
+  cursor:pointer;
+}
+.saved-card > summary::-webkit-details-marker{display:none;}
+.saved-card > summary .chev{
+  position:absolute; right:20px; top:24px;
+  color:var(--ink-faint);
+  display:block;
+}
+.saved-card[open] > summary .chev{transform:rotate(-135deg) translateY(-2px);}
+.saved-card-head{display:flex; align-items:flex-start; gap:8px; margin-bottom:4px;}
+.saved-card-head h2{
+  font-family:var(--serif);
+  font-size:18px;
+  line-height:1.45;
+  margin:0;
+  flex:1; min-width:0;
+}
+.saved-card .saved-macro{margin:0;}
+.saved-body{padding:4px 18px 18px; border-top:1px solid var(--line); padding-top:16px;}
+.saved-body h3{
+  display:flex; align-items:center; gap:8px;
+  font-size:13px; font-weight:700; letter-spacing:.06em;
+  margin:0 0 10px; color:var(--ink-soft);
+}
+.saved-nutrition-none{
+  margin:10px 0 0;
+  font-size:12px;
+  line-height:1.6;
+  color:var(--ink-faint);
+}
+.remove-saved-btn{
+  min-height:38px;
+  margin-top:14px;
+  padding:7px 16px;
+  border-radius:100px;
+  border:1.5px solid var(--line);
+  background:transparent;
+  color:var(--danger);
+  font-size:13px;
+  font-weight:700;
+  cursor:pointer;
+}
+
+/* ---------- アカウント ---------- */
+.account-box{margin-top:12px;}
+.account-status{
+  display:flex; align-items:center; gap:12px;
+  padding:12px 14px;
+  border-radius:var(--radius-sm);
+  background:var(--brand-soft);
+  margin-bottom:12px;
+}
+.account-avatar{
+  width:38px; height:38px; border-radius:50%;
+  display:grid; place-items:center;
+  background:var(--brand); color:#fff;
+}
+.account-avatar svg{width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round;}
+.account-status p{margin:0; font-weight:700; font-size:14px;}
+.account-status .input-hint{margin:0; font-weight:500;}
+#auth-status{text-align:center;}
+
+/* ---------- 画面が広いとき ---------- */
+@media (min-width:600px){
+  .app{padding-left:24px; padding-right:24px; border-left:1px solid var(--line); border-right:1px solid var(--line);}
+  .view-tabs{border-left:1px solid var(--line); border-right:1px solid var(--line);}
+}
+@media (prefers-reduced-motion: reduce){
+  *{animation:none !important; transition:none !important;}
+  .spinner{animation:spin 1.6s linear infinite !important;}
+}
+
+/* 「保存済み」「設定」ではヘッダーを省いて、一覧や設定をすぐ見られるようにする */
+.app:has(#view-create[hidden]) .hero{display:none;}
+.app:has(#view-create[hidden]) main > .view-title:first-child{font-size:24px; margin-top:8px;}
