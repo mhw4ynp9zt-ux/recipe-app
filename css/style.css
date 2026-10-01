@@ -413,3 +413,20 @@
   .nd-skip{color:var(--ink-soft);}
   .nd-total{margin:6px 0 0; font-size:12px; line-height:1.6;}
   .nd-note{margin:8px 0 0; font-size:11px; color:var(--ink-soft); line-height:1.6;}
+
+  /* ==== レシピ作成中の進捗表示 ==== */
+  .create-progress{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:16px}
+  .cp-status{margin:0 0 10px;font-weight:700;text-align:center;color:var(--ink)}
+  .cp-bar{height:10px;background:var(--line);border-radius:999px;overflow:hidden}
+  .cp-fill{height:100%;width:0;background:var(--veg);border-radius:999px;transition:width .4s ease}
+  .cp-meta{display:flex;justify-content:space-between;margin:6px 2px 10px;font-size:12px;color:var(--ink-soft)}
+  .cp-steps{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:13px}
+  .cp-steps li{color:var(--ink-soft);opacity:.45;display:flex;gap:8px;align-items:center;transition:opacity .3s}
+  .cp-steps li::before{content:"○";width:1em;text-align:center}
+  .cp-steps li.active{opacity:1;color:var(--ink);font-weight:700}
+  .cp-steps li.active::before{content:"◔";animation:cp-spin 1s linear infinite}
+  .cp-steps li.done{opacity:.8;color:var(--veg)}
+  .cp-steps li.done::before{content:"✓"}
+  .cp-note{margin:10px 0 0;font-size:12px;color:var(--ink-soft);text-align:center}
+  @keyframes cp-spin{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){.cp-steps li.active::before{animation:none}.cp-fill{transition:none}}
