@@ -1,7 +1,10 @@
 /* ==========================================================
-   今日のレシピ回し — スタイル
+   コンダテ — スタイル
    テーマ: 生成りの紙 × 深い緑 × 栄養指標ごとの色(献立ノートの雰囲気)
    ========================================================== */
+/* ヘッダーのロゴ用フォント(Zen Maru Gothic の極太) */
+@import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@900&display=swap');
+
 :root{
   color-scheme: only light;
 
@@ -39,6 +42,7 @@
   --shadow:0 1px 2px rgba(40,50,30,.05), 0 6px 20px -12px rgba(40,50,30,.25);
   --tabbar-h:62px;
   --serif:'Shippori Mincho', serif;
+  --logo:'Zen Maru Gothic', 'Zen Kaku Gothic New', system-ui, sans-serif;
 }
 
 *{box-sizing:border-box;}
@@ -75,28 +79,60 @@ button{font-family:inherit; color:inherit;}
   padding:calc(env(safe-area-inset-top) + 22px) 16px calc(env(safe-area-inset-bottom) + var(--tabbar-h) + 32px);
 }
 
-/* ---------- ヘッダー ---------- */
-.hero{margin:4px 2px 20px;}
-.brand{
-  display:inline-flex; align-items:center; gap:6px;
-  margin:0 0 10px;
-  font-size:12px; font-weight:700; letter-spacing:.08em;
-  color:var(--brand);
+/* ---------- ヘッダー(深緑のバナー + 白抜きのロゴ) ---------- */
+.hero{
+  position:relative;
+  overflow:hidden;
+  margin:4px 0 20px;
+  padding:26px 20px 22px;
+  background:var(--brand);
+  color:#fff;
+  border-radius:18px;
 }
-.brand-mark{width:18px; height:18px;}
-.hero h1{
-  font-family:var(--serif);
-  font-weight:800;
-  font-size:30px;
-  line-height:1.3;
+/* ロゴの上の小さな英字 */
+.hero::before{
+  content:"KONDATE";
+  position:relative;
+  display:block;
   margin:0 0 8px;
-  letter-spacing:.02em;
+  font-size:11px; font-weight:700; letter-spacing:.3em;
+  opacity:.7;
+}
+.brand{
+  display:block;
+  margin:0 0 12px;
+  font-family:var(--logo);
+  font-weight:900;
+  font-size:clamp(44px, 15vw, 60px);
+  line-height:1.1;
+  letter-spacing:.08em;
+  color:#fff;
+}
+/* 的のマークは、バナーの右下に大きく薄く敷く */
+.brand-mark{
+  position:absolute;
+  right:-40px; bottom:-70px;
+  width:230px; height:230px;
+  opacity:.1;
+  pointer-events:none;
+}
+.brand-mark circle{stroke-width:.8;}
+/* 見出し(h1)は画面には出さず、読み上げ用に残す */
+.hero h1{
+  position:absolute;
+  width:1px; height:1px;
+  margin:-1px; padding:0;
+  overflow:hidden;
+  clip:rect(0 0 0 0);
+  white-space:nowrap;
+  border:0;
 }
 .hero-lead{
+  position:relative;
   margin:0;
-  font-size:14px;
+  font-size:13.5px;
   line-height:1.75;
-  color:var(--ink-soft);
+  color:rgba(255,255,255,.88);
 }
 
 /* ---------- 下部のタブバー(親指で届く位置) ---------- */
@@ -813,7 +849,6 @@ select{
 @media (min-width:600px){
   .app{padding-left:24px; padding-right:24px; border-left:1px solid var(--line); border-right:1px solid var(--line);}
   .view-tabs{border-left:1px solid var(--line); border-right:1px solid var(--line);}
-  .hero h1{font-size:34px;}
 }
 @media (prefers-reduced-motion: reduce){
   *{animation:none !important; transition:none !important;}
