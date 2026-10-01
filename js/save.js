@@ -2,7 +2,7 @@
 // ログイン中はサーバー(D1)に、未ログイン中はこの端末のlocalStorageに保存します。
 // isSaved/toggleSaveは今までどおり同期関数のまま使えるように、
 // savedCacheというメモリ上のキャッシュを介して読み書きします。
-// utils.js の表示ヘルパー(renderIngredientsHtml など)、config.js の NUTRIENT_METRICS、auth.js の isLoggedIn に依存します。
+// utils.js の withPieceCount、config.js の NUTRIENT_METRICS、auth.js の isLoggedIn に依存します。
 
   // 「作る」タブでAIが生成したレシピを保持する配列(保存ボタン押下時に元データを参照するため)
   const recipes = [];
@@ -106,21 +106,21 @@
     }
     emptyEl.hidden = true;
     listEl.innerHTML = list.map(d => `
-      <article class="saved-item">
-        <div class="dish-head">
-          <p class="dish-meta"><span>${escapeHtml(d.type || '')}</span></p>
-          <button class="remove-saved-btn" data-remove-id="${escapeHtml(d.id)}">削除する</button>
+      <div class="saved-card">
+        <div class="saved-card-head">
+          <h2>${d.name}</h2>
+          <span class="dish-type-tag">${d.type}</span>
         </div>
-        <h2 class="dish-title">${escapeHtml(d.name)}</h2>
-        ${renderNutrientRow(d, NUTRIENT_METRICS)}
-        <section class="ingredients">
+        <p class="saved-macro">${NUTRIENT_METRICS.filter(m => d[m.id] != null).map(m => m.label + ' ' + d[m.id] + m.unit).join(' ・ ')}</p>
+        <div class="ingredients">
           <h3>材料</h3>
-          ${renderIngredientsHtml(d.ingredients)}
-        </section>
-        <section class="steps">
+          <ul>${d.ingredients.map(x => '<li>' + withPieceCount(x) + '</li>').join('')}</ul>
+        </div>
+        <div class="steps">
           <h3>作り方</h3>
-          ${renderStepsHtml(d.steps)}
-        </section>
-      </article>
+          <ol>${d.steps.map(x => '<li>' + x + '</li>').join('')}</ol>
+        </div>
+        <button class="remove-saved-btn" data-remove-id="${d.id}">削除する</button>
+      </div>
     `).join('');
   }
