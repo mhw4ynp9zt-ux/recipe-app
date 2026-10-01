@@ -20,11 +20,7 @@
 
   <header class="hero">
     <h1>今日、何つくる?</h1>
-    <p>食材と気になる栄養の目標を入力すると、AIがぴったりのレシピを考えます。</p>
-    <div class="goal-line">
-      <span class="goal-chip">1日の目標 たんぱく質104g</span>
-      <span class="goal-chip">野菜+果物800g</span>
-    </div>
+    <p>気になる栄養の目標を入力すると、AIがぴったりのレシピを考えます。食材は指定してもしなくてもOKです。</p>
   </header>
 
   <div class="view-tabs">
@@ -35,14 +31,14 @@
 
   <div id="view-create">
     <div class="ingredient-input">
-      <label for="create-ingredients">お持ちの食材</label>
+      <label for="create-ingredients">お持ちの食材(任意)</label>
       <input type="text" id="create-ingredients" placeholder="例: 鶏むね肉 キャベツ 卵" autocomplete="off" autocapitalize="none">
-      <p class="input-hint">スペース区切りで、使いたい食材を入力してください。</p>
+      <p class="input-hint">スペース区切りで、使いたい食材を入力してください。空欄ならAIが食材も含めておまかせで考えます。</p>
 
       <div class="exclude-block">
         <label for="create-mood">雰囲気・ジャンル(あれば)</label>
         <input type="text" id="create-mood" placeholder="例: カレー、中華、鍋、さっぱり和風 など" autocomplete="off" autocapitalize="none">
-        <p class="input-hint">作りたい料理のジャンルや味の方向性を入力してください。空欄なら食材からおまかせで考えます。</p>
+        <p class="input-hint">作りたい料理のジャンルや味の方向性を入力してください。空欄ならおまかせで考えます。</p>
       </div>
 
       <div class="metric-toggle-block">
