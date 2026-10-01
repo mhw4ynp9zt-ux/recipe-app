@@ -3,9 +3,16 @@
 // save.js の isSaved/toggleSave/recipes配列、auth.js の isLoggedIn/checkSession、
 // error-log.js の logError/logWarn(管理者向けエラーログ)に依存します。
 // 栄養量はAIの目分量ではなく、サーバーが日本食品標準成分表(D1)から計算した値を表示します(内訳は各品の「栄養の計算内訳」)。
-// AIの呼び出しはサーバー(/api/ai/create-recipe)が行います。ブラウザには食材・雰囲気・品数・栄養目標だけを送り、
+// AIの呼び出しはサーバーが行います。ブラウザには食材・雰囲気・品数・栄養目標だけを送り、
 // APIキー・モデル・プロンプトはサーバー側(管理者が設定)で扱うため、この画面には一切現れません。
 // AIが使えるのはログイン中のユーザーだけで、アプリ全体の1日の利用回数に上限があります。
+//
+// 作成は「ジョブ」としてサーバーで進みます(functions/_lib/recipe-job.js)。
+//   1. POST /api/ai/create-recipe   … ジョブを作るだけ(AIは呼ばれない)。jobId を受け取り、この端末に控える
+//   2. POST /api/ai/jobs/{jobId}    … ジョブを最後まで動かす(完了まで待つ。切れてもサーバーは続ける)
+//   3. GET  /api/ai/jobs/{jobId}    … 1秒ごとに進捗%・結果を受け取る(読むだけ。AIは呼ばれない)
+// アプリを切り替える・画面をロックする・ページを開き直す、のあとでも、控えたjobIdで続きの進捗や結果を受け取れます。
+// 「実行中なのに誰も処理していない」とサーバーが知らせてきたときだけ、画面側が 2. を呼んで続きを動かします。
 
   function escapeHtml(str){
     return String(str).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -30,16 +37,87 @@
   function hideCreateError(){
     createErrorEl.hidden = true;
   }
-  const CREATE_LOADING_TEXT = 'レシピを考えています…(画面を開いたままお待ちください)';
+  const CREATE_LOADING_TEXT = 'レシピを考えています…';
+  const CREATE_LOADING_NOTE = '画面を離れても大丈夫です。戻ると続きが表示されます。';
 
-  // 待っている間の経過秒数表示(長い待ち時間でも「動いている」ことが分かるように)
+  // ==== 進捗のパーセント表示(サーバーが返す進捗%を、なめらかに追いかけて表示する) ====
+  // 進捗%は、AIが返答を書いた量(ストリーミング)と、栄養計算・目標チェック・作り直しの段階から、サーバーが計算します。
+  // 画面側の表示は戻らず(単調増加)、完成するまで100%にはなりません。
+  let progressTarget = 0;   // サーバーが最後に知らせた進捗(0〜99。完成時だけ100)
+  let progressShown = 0;    // いま画面に出している進捗(目標へ少しずつ近づく)
+  let progressFillEl = null;
+  let progressPctEl = null;
+  let progressTrackEl = null;
   let loadingActive = false;
-  let loadingStartedAt = 0;
-  function tickLoading(){
-    if(!loadingActive || !createLoadingSubEl) return;
-    const sec = Math.floor((Date.now() - loadingStartedAt) / 1000);
-    createLoadingSubEl.textContent = 'AIによる作成と、成分表での栄養計算を行っています(経過 ' + sec + ' 秒)';
-    setTimeout(tickLoading, 1000);
+
+  // 進捗バー用のスタイルと部品(HTML/CSSファイルを増やさず、この画面の部品として持つ)。
+  // 進捗バーが作れなくても、レシピの作成そのものは止めない(パーセントの文字が出ないだけ)。
+  function ensureProgressUi(){
+    if(progressFillEl) return;
+    try {
+      if(!document.getElementById('progress-style') && document.head && document.createElement){
+        const style = document.createElement('style');
+        style.id = 'progress-style';
+        style.textContent =
+          '.loading-card > div{flex:1; min-width:0;}' +
+          '.progress{display:flex; align-items:center; gap:10px; margin-top:8px;}' +
+          '.progress-track{flex:1; height:8px; border-radius:999px; background:var(--brand-soft); overflow:hidden;}' +
+          '.progress-fill{height:100%; width:0; border-radius:999px; background:var(--brand); transition:width .2s linear;}' +
+          '.progress-pct{min-width:3.4em; text-align:right; font-size:14px; font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums;}';
+        document.head.appendChild(style);
+      }
+      const box = document.createElement('div');
+      box.className = 'progress';
+      box.innerHTML = '<div class="progress-track" role="progressbar" aria-label="レシピ作成の進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="progress-fill"></div></div><span class="progress-pct">0%</span>';
+      const host = (createLoadingSubEl && createLoadingSubEl.parentNode) || createLoadingEl;
+      host.appendChild(box);
+      progressTrackEl = box.querySelector('.progress-track');
+      progressFillEl = box.querySelector('.progress-fill');
+      progressPctEl = box.querySelector('.progress-pct');
+      if(!progressTrackEl || !progressFillEl || !progressPctEl) progressFillEl = null;
+    } catch(e){
+      progressFillEl = null;
+    }
+  }
+
+  function renderProgress(){
+    if(!progressFillEl) return;
+    const pct = Math.floor(progressShown);
+    progressFillEl.style.width = pct + '%';
+    progressPctEl.textContent = pct + '%';
+    progressTrackEl.setAttribute('aria-valuenow', String(pct));
+  }
+
+  // サーバーの進捗を受け取る。値は戻さない(通信のタイミングで一瞬小さい値が来ても、表示は下がらない)
+  function setProgressTarget(pct){
+    const v = Math.max(0, Math.min(100, Number(pct) || 0));
+    if(v > progressTarget) progressTarget = v;
+  }
+
+  function tickProgress(){
+    if(!loadingActive) return;
+    const gap = progressTarget - progressShown;
+    if(gap > 0) progressShown = Math.min(progressTarget, progressShown + Math.max(gap * 0.12, 0.2));
+    renderProgress();
+    setTimeout(tickProgress, 120);
+  }
+
+  // 進捗の段階の文言(サーバーの stage と、ここまでに成功したAI呼び出しの回数 attempt から)
+  function stageText(state){
+    switch(state && state.stage){
+      case 'queued': return '準備しています';
+      case 'nutrition': return '成分表で栄養を計算しています';
+      case 'retry': return '目標との差を確認して、作り直します';
+      case 'ai':
+      default:
+        return state && state.attempt > 0
+          ? '目標に合わせてレシピを作り直しています(' + (state.attempt + 1) + '回目)'
+          : 'AIがレシピを考えています';
+    }
+  }
+
+  function setLoadingSub(text){
+    if(createLoadingSubEl) createLoadingSubEl.textContent = text;
   }
 
   function setCreateLoading(isLoading){
@@ -50,8 +128,12 @@
     const wasActive = loadingActive;
     loadingActive = isLoading;
     if(isLoading && !wasActive){
-      loadingStartedAt = Date.now();
-      tickLoading();
+      ensureProgressUi();
+      progressTarget = 0;
+      progressShown = 0;
+      renderProgress();
+      setLoadingSub(CREATE_LOADING_NOTE);
+      tickProgress();
       if(typeof createLoadingEl.scrollIntoView === 'function') createLoadingEl.scrollIntoView({behavior:'smooth', block:'center'});
     } else if(!isLoading && createLoadingSubEl){
       createLoadingSubEl.textContent = '';
@@ -287,24 +369,234 @@
     return !!(targetCheck && targetCheck.ok === false);
   }
 
+  // ==== 作成ジョブ(サーバー側で進み、戻ってきたときに続きを受け取る) ====
+  const JOB_KEY = 'recipeJobV1';               // 作成中のジョブを控える場所(この端末のlocalStorage)
+  const JOB_KEEP_MS = 30 * 60 * 1000;          // これより古い控えは捨てる(サーバー側も1日で消える)
+  const POLL_VISIBLE_MS = 1000;                // 画面が見えている間の確認間隔(読むだけ。AIは呼ばれない)
+  const POLL_HIDDEN_MS = 4000;
+  const RUN_RETRY_GAP_MS = 4000;               // 「続きを動かす」要求を出し直すまでの最短間隔
+  const MAX_POLL_FAILURES = 40;                // 状況を取れない状態がこの回数続いたら、あきらめて案内を出す
+
+  function saveJobNote(job){
+    try { localStorage.setItem(JOB_KEY, JSON.stringify(job)); } catch(e){ /* 保存できない環境では、ページを開き直した復帰だけできない */ }
+  }
+  function loadJobNote(){
+    try {
+      const job = JSON.parse(localStorage.getItem(JOB_KEY) || 'null');
+      if(job && typeof job.id === 'string' && Date.now() - job.startedAt < JOB_KEEP_MS) return job;
+    } catch(e){ /* 読めなければ無いものとして扱う */ }
+    return null;
+  }
+  function clearJobNote(){
+    try { localStorage.removeItem(JOB_KEY); } catch(e){ /* 無視 */ }
+  }
+
+  let watchingJobId = null;    // いま画面で追っているジョブ
+  let wakeWatcher = null;      // 待機中の確認ループを今すぐ起こす関数
+
+  function sleepOrWake(ms){
+    return new Promise(resolve => {
+      const timer = setTimeout(done, ms);
+      function done(){ clearTimeout(timer); wakeWatcher = null; resolve(); }
+      wakeWatcher = done;
+    });
+  }
+
+  // 画面に戻ってきたら、すぐ状況を確認する(ロック・アプリ切替のあと、待たずに続きを受け取る)
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'visible' && wakeWatcher) wakeWatcher();
+  });
+
+  async function readJson(response){
+    let text = '';
+    try { text = await response.text(); } catch(e){ /* 本文が読めなければ空として扱う */ }
+    let data = {};
+    let notJson = false;
+    try { data = text ? JSON.parse(text) : {}; } catch(e){ notJson = true; }
+    if(!data || typeof data !== 'object') data = {};
+    return { data: data, text: text, notJson: notJson };
+  }
+
+  // 成功: サーバーが返した結果(dishes など)を画面に出す
+  function showJobResult(data, logContext){
+    logContext.debug = data.debug;
+    if(data.debug && debugHasProblem(data.debug, data.targetCheck)){
+      // 作成は成功したが、作り直しの失敗・栄養計算の失敗・最終的に目標に収まらなかった等の問題があった場合だけ警告にする。
+      // 作り直しが入っても最終的に目標に収まった場合(debug が info だけ)は、警告にもエラーログにもしない。
+      logWarn('create-recipe', '作成は成功しましたが、サーバーが問題を報告しました', {
+        request: logContext.request, jobId: logContext.jobId, debug: data.debug,
+      });
+    }
+    const items = Array.isArray(data.dishes) ? data.dishes : null;
+    if(!items || !items.length){
+      throw new Error('Unexpected response shape');
+    }
+    const nutritionOk = data.nutritionOk !== false;
+    const batchId = Date.now();
+    const dishes = items.map((parsedItem, idx) => {
+      if(!parsedItem.name || !Array.isArray(parsedItem.ingredients) || !Array.isArray(parsedItem.steps)){
+        throw new Error('Unexpected item shape');
+      }
+      const recipe = {
+        id: 'created-' + batchId + '-' + (idx + 1),
+        category: 'created',
+        type: parsedItem.type || 'その他',
+        stove: parsedItem.type === 'スープ' ? false : true,
+        effort: computeEffort(parsedItem.ingredients, parsedItem.steps),
+        name: parsedItem.name,
+        ingredients: parsedItem.ingredients,
+        steps: parsedItem.steps
+      };
+      // サーバーが成分表から計算した値を記録する。
+      //   選択していた指標は従来どおり recipe[指標ID] に(保存済みレシピの表示でも使う。サーバーは選択した指標だけを入れて返す)
+      //   全指標・照合の内訳は nutrition / ingredientDetails / nutritionCheck に
+      if(nutritionOk){
+        NUTRIENT_METRICS.forEach(m => {
+          if(parsedItem[m.id] != null){
+            recipe[m.id] = roundNutrient(Number(parsedItem[m.id]) || 0);
+          }
+        });
+        recipe.nutrition = parsedItem.nutrition;
+        recipe.nutritionCheck = parsedItem.nutritionCheck;
+        recipe.ingredientDetails = parsedItem.ingredientDetails;
+      }
+      recipes.push(recipe);
+      return recipe;
+    });
+    renderCreatedCombo(dishes, nutritionOk, data.targetCheck);
+  }
+
+  // 終了処理(成功・失敗どちらでも)。ジョブの控えを消し、待機表示を閉じる
+  function endWatching(jobId){
+    if(watchingJobId === jobId) watchingJobId = null;
+    clearJobNote();
+    setCreateLoading(false);
+  }
+
+  function failWatching(jobId, err, logContext, userMessage){
+    logContext.elapsedMs = Date.now() - logContext.startedAt;
+    logError('create-recipe', err, logContext);
+    endWatching(jobId);
+    showCreateError(userMessage || err.userMessage || 'レシピの作成に失敗しました。もう一度お試しください。');
+  }
+
+  // ジョブの進捗を追い、完成・失敗まで見届ける。
+  //   ・1秒ごとにGET(読むだけ)で進捗%を更新する
+  //   ・サーバーが「実行中なのに誰も処理していない(stalled)」と知らせたときだけ、POSTで続きを動かす
+  async function watchJob(job){
+    watchingJobId = job.id;
+    const logContext = { request: job.request, jobId: job.id, startedAt: job.startedAt, resumed: !!job.resumed };
+    let wasHidden = document.visibilityState === 'hidden';
+    const onVisibility = () => { if(document.visibilityState === 'hidden') wasHidden = true; };
+    document.addEventListener('visibilitychange', onVisibility);
+    let runInFlight = false;
+    let lastRunAt = 0;
+    let failures = 0;
+    let polls = 0;
+
+    const kickRun = () => {
+      runInFlight = true;
+      lastRunAt = Date.now();
+      logContext.runRequests = (logContext.runRequests || 0) + 1;
+      // 完了まで待つ要求。切れても(画面を離れた・iOSが通信を切った)、サーバーは続き、状況はGETで分かる
+      fetch('/api/ai/jobs/' + encodeURIComponent(job.id), { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+        .catch(() => { /* 通信が切れただけ。状況はGETで確認する */ })
+        .then(() => { runInFlight = false; if(wakeWatcher) wakeWatcher(); });
+    };
+
+    try {
+      while(watchingJobId === job.id){
+        let state = null;
+        try {
+          const res = await fetch('/api/ai/jobs/' + encodeURIComponent(job.id), { cache: 'no-store' });
+          polls++;
+          const body = await readJson(res);
+          logContext.status = res.status;
+          if(res.status === 401){
+            checkSession();
+            logContext.serverError = body.data.error;
+            failWatching(job.id, new Error('Job polling unauthorized'), logContext, 'ログインの有効期限が切れました。もう一度ログインしてからお試しください。');
+            return;
+          }
+          if(res.status === 404){
+            logContext.serverError = body.data.error;
+            failWatching(job.id, new Error('Job not found'), logContext, '作成中のレシピが見つかりませんでした。もう一度作成してください。');
+            return;
+          }
+          if(!res.ok) throw new Error('Job polling failed: ' + res.status);
+          state = body.data;
+          failures = 0;
+        } catch(netErr){
+          // 通信が切れている間(圏外・ロック中など)は、つながるまで待つ。サーバー側の作成は止まらない
+          failures++;
+          logContext.lastPollError = netErr && netErr.message;
+          if(failures >= MAX_POLL_FAILURES){
+            failWatching(job.id, netErr, logContext, '通信が不安定で、作成の状況を確認できませんでした。電波の良い場所で、少し待ってからもう一度お試しください。');
+            return;
+          }
+          setLoadingSub('通信を待っています…つながると続きを受け取ります');
+        }
+
+        if(state){
+          logContext.polls = polls;
+          if(state.status === 'done'){
+            setProgressTarget(100);
+            progressShown = 100;
+            renderProgress();
+            await sleepOrWake(250); // 100% を一瞬見せてから結果へ
+            logContext.wasHidden = wasHidden;
+            try {
+              showJobResult(state.result || {}, logContext);
+            } catch(err){
+              failWatching(job.id, err, logContext);
+              return;
+            }
+            endWatching(job.id);
+            return;
+          }
+          if(state.status === 'error'){
+            logContext.status = state.httpStatus;
+            logContext.serverError = state.error;
+            logContext.debug = state.debug;
+            logContext.wasHidden = wasHidden;
+            const apiErr = new Error('API request failed: ' + state.httpStatus);
+            apiErr.userMessage = state.error;
+            failWatching(job.id, apiErr, logContext);
+            return;
+          }
+          // 作成中: 進捗%と段階を更新し、誰も処理していなければ続きを動かす
+          setProgressTarget(state.progress);
+          setLoadingSub(stageText(state));
+          if(state.stalled && !runInFlight && Date.now() - lastRunAt >= RUN_RETRY_GAP_MS) kickRun();
+        }
+        await sleepOrWake(document.visibilityState === 'hidden' ? POLL_HIDDEN_MS : POLL_VISIBLE_MS);
+      }
+    } finally {
+      document.removeEventListener('visibilitychange', onVisibility);
+    }
+  }
+
+  let creatingJob = false;     // ジョブを作る要求の最中(この間の二重タップは無視する)
+
   async function generateRecipe(){
+    if(watchingJobId || creatingJob) return; // すでに作成中(二重に押してもAIを重ねて呼ばない)
     const ingredientsRaw = document.getElementById('create-ingredients').value.trim();
     const moodRaw = document.getElementById('create-mood').value.trim();
     if(!isLoggedIn()){
       showCreateError('AIでレシピを作成するには、「設定」タブからパスキーでログインしてください。');
       return;
     }
+    creatingJob = true;
     hideCreateError();
     setCreateLoading(true);
     createResultEl.hidden = true;
     createNoteEl.hidden = true;
     // 失敗したときに管理者向けエラーログ(error-log.js)へ残す情報。サーバーの debug は管理者にだけ返ってくる。
-    const logContext = {};
-    const startedAt = Date.now();
-    // 待っている間に画面を離れた(ロック・アプリ切り替え)かを記録する。iOSはその間に通信を切ることがある
+    const logContext = { startedAt: Date.now() };
     let wasHidden = false;
     const onVisibility = () => { if(document.visibilityState === 'hidden') wasHidden = true; };
     document.addEventListener('visibilitychange', onVisibility);
+    let started = null;
     try {
       const target = getCreateTarget();
       const activeMetrics = getActiveMetrics();
@@ -317,8 +609,8 @@
         count: target.count,
         targets: targets
       });
-      // 応答が返る前に通信が切れた場合(iOS Safariでは TypeError "Load failed")だけ、1回だけ自動で再試行する。
-      // サーバーが返したエラー(401/429/502など)は再試行しない。
+      // ジョブを作るだけの短い要求(AIは呼ばれない)。応答が返る前に通信が切れた場合(iOS Safariでは TypeError "Load failed")だけ、
+      // 1回だけ自動で再試行する。再試行しても、サーバーは実行中のジョブを重ねて作らない。
       let response;
       for(let n = 1; n <= 2; n++){
         logContext.fetchAttempts = n;
@@ -333,83 +625,56 @@
           if(!(netErr instanceof TypeError) || n === 2) throw netErr;
           logWarn('create-recipe', '通信が切れたため自動で再試行します', {
             request: logContext.request, message: netErr.message,
-            elapsedMs: Date.now() - startedAt, wasHidden: wasHidden,
+            elapsedMs: Date.now() - logContext.startedAt, wasHidden: wasHidden,
           });
-          createLoadingTextEl.textContent = '通信が切れたため、もう一度試しています…';
+          setLoadingSub('通信が切れたため、もう一度試しています…');
         }
       }
       logContext.status = response.status;
-      let rawText = '';
-      try { rawText = await response.text(); } catch(e){ /* 本文が読めなければ空として扱う */ }
-      let data = {};
-      try {
-        data = rawText ? JSON.parse(rawText) : {};
-      } catch(e){
-        logContext.responseText = rawText; // JSONではない応答(エラーページのHTMLなど)は原因調査のため本文も残す
-      }
-      if(!data || typeof data !== 'object') data = {};
-      logContext.serverError = data.error;
-      logContext.debug = data.debug;
-      if(response.ok && data.debug && debugHasProblem(data.debug, data.targetCheck)){
-        // 作成は成功したが、作り直しの失敗・栄養計算の失敗・最終的に目標に収まらなかった等の問題があった場合だけ警告にする。
-        // 作り直しが入っても最終的に目標に収まった場合(debug が info だけ)は、警告にもエラーログにもしない。
-        logWarn('create-recipe', '作成は成功しましたが、サーバーが問題を報告しました', {
-          request: logContext.request, status: response.status, debug: data.debug,
-        });
-      }
+      const body = await readJson(response);
+      if(body.notJson) logContext.responseText = body.text; // JSONではない応答(エラーページのHTMLなど)は原因調査のため本文も残す
+      logContext.serverError = body.data.error;
+      logContext.debug = body.data.debug;
       if(!response.ok){
         // ログインの期限切れなら状態を更新し、サーバーが返した日本語メッセージ(上限到達など)をそのまま表示する
         if(response.status === 401) checkSession();
         const apiErr = new Error('API request failed: ' + response.status);
-        apiErr.userMessage = data.error;
+        apiErr.userMessage = body.data.error;
         throw apiErr;
       }
-      const items = Array.isArray(data.dishes) ? data.dishes : null;
-      if(!items || !items.length){
-        throw new Error('Unexpected response shape');
+      if(typeof body.data.jobId !== 'string') throw new Error('Unexpected response shape');
+      started = { id: body.data.jobId, request: logContext.request, startedAt: Date.now(), resumed: !!body.data.resumed };
+      if(body.data.resumed){
+        // すでに作成中のものがあった(二重タップ・開き直しなど)。新しく作らず、その続きを表示する
+        setLoadingSub('作成中のレシピがあるため、その続きを表示します');
       }
-      const nutritionOk = data.nutritionOk !== false;
-      const batchId = Date.now();
-      const dishes = items.map((parsedItem, idx) => {
-        if(!parsedItem.name || !Array.isArray(parsedItem.ingredients) || !Array.isArray(parsedItem.steps)){
-          throw new Error('Unexpected item shape');
-        }
-        const recipe = {
-          id: 'created-' + batchId + '-' + (idx + 1),
-          category: 'created',
-          type: parsedItem.type || 'その他',
-          stove: parsedItem.type === 'スープ' ? false : true,
-          effort: computeEffort(parsedItem.ingredients, parsedItem.steps),
-          name: parsedItem.name,
-          ingredients: parsedItem.ingredients,
-          steps: parsedItem.steps
-        };
-        // サーバーが成分表から計算した値を記録する。
-        //   選択していた指標は従来どおり recipe[指標ID] に(保存済みレシピの表示でも使う)
-        //   全指標・照合の内訳は nutrition / ingredientDetails / nutritionCheck に
-        if(nutritionOk){
-          activeMetrics.forEach(m => {
-            if(parsedItem[m.id] != null){
-              recipe[m.id] = roundNutrient(Number(parsedItem[m.id]) || 0);
-            }
-          });
-          recipe.nutrition = parsedItem.nutrition;
-          recipe.nutritionCheck = parsedItem.nutritionCheck;
-          recipe.ingredientDetails = parsedItem.ingredientDetails;
-        }
-        recipes.push(recipe);
-        return recipe;
-      });
-      renderCreatedCombo(dishes, nutritionOk, data.targetCheck);
     } catch(err){
-      logContext.elapsedMs = Date.now() - startedAt;
+      logContext.elapsedMs = Date.now() - logContext.startedAt;
       logContext.wasHidden = wasHidden;
       logError('create-recipe', err, logContext);
       showCreateError(err.userMessage || 'レシピの作成に失敗しました。もう一度お試しください。');
-    } finally {
-      document.removeEventListener('visibilitychange', onVisibility);
       setCreateLoading(false);
+      return;
+    } finally {
+      creatingJob = false;
+      document.removeEventListener('visibilitychange', onVisibility);
     }
+    saveJobNote(started);
+    await watchJob(started);
+  }
+
+  // ページを開き直した・アプリに戻ったときに、作成中だったジョブの続きを受け取る
+  function resumePendingJob(){
+    if(watchingJobId) return;
+    const job = loadJobNote();
+    if(!job) return;
+    hideCreateError();
+    setCreateLoading(true);
+    createResultEl.hidden = true;
+    createNoteEl.hidden = true;
+    setLoadingSub('前回の作成の続きを確認しています…');
+    job.resumed = true;
+    watchJob(job);
   }
 
   generateBtn.addEventListener('click', generateRecipe);
@@ -428,3 +693,5 @@
     btn.classList.toggle('saved', nowSaved);
     btn.textContent = nowSaved ? '★ 保存済み' : '☆ 保存する';
   });
+
+  resumePendingJob();
