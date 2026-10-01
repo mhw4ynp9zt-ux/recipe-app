@@ -140,6 +140,20 @@
     return Math.round(v * 10) / 10;
   }
 
+  // 全品の合計が目標の±5%に収まったかの表示(サーバーが計算・必要ならAIに作り直させた結果)
+  function renderTargetCheck(tc){
+    if(!tc || !Array.isArray(tc.results)) return '';
+    if(tc.ok) return '<p class="target-check">✓ 目標の±' + tc.tolerancePct + '%以内に収まっています</p>';
+    const items = tc.results.filter(r => !r.ok).map(r => {
+      const m = NUTRIENT_METRICS.find(x => x.id === r.id);
+      const label = m ? m.label : r.id;
+      const unit = m ? m.unit : '';
+      return escapeHtml(label) + ' ' + r.total + unit + '(目標' + r.target + unit + '、' + (r.diffPct > 0 ? '+' : '') + r.diffPct + '%)';
+    });
+    return '<p class="nutrition-warn">' + tc.attempts + '回まで作り直しましたが、目標の±' + tc.tolerancePct + '%に収まらない項目が残りました: ' +
+      items.join('、') + '。食材や目標値を少し変えて、もう一度作成してみてください。</p>';
+  }
+
   // 成分表と照合できなかった食材・値がなかった食材があれば、栄養量の下に知らせる
   function renderNutritionWarn(d){
     const c = d.nutritionCheck;
@@ -178,9 +192,10 @@
       </details>`;
   }
 
-  function renderCreatedCombo(dishes, nutritionOk){
+  function renderCreatedCombo(dishes, nutritionOk, targetCheck){
     // このバッチで実際に値が入っている指標だけをバッジ・表示対象にする(選択しなかった指標は表示しない)
     const shown = NUTRIENT_METRICS.filter(m => dishes.some(d => d[m.id] != null));
+    const offIds = new Set(((targetCheck && targetCheck.results) || []).filter(r => !r.ok).map(r => r.id));
     createResultEl.hidden = false;
     createResultEl.innerHTML = `
       <div class="recipe-card">
@@ -188,9 +203,10 @@
         <div class="badges">
           ${shown.map(m => {
             const total = roundNutrient(dishes.reduce((s, d) => s + (d[m.id] || 0), 0));
-            return `<span class="badge ${m.id}">${m.label}(合計) ${total}${m.unit}</span>`;
+            return `<span class="badge ${m.id}${offIds.has(m.id) ? ' off' : ''}">${m.label}(合計) ${total}${m.unit}</span>`;
           }).join('')}
         </div>
+        ${nutritionOk ? renderTargetCheck(targetCheck) : ''}
         ${dishes.map((d, i) => `
           <div class="dish-block">
             <div class="dish-head">
@@ -290,7 +306,7 @@
         recipes.push(recipe);
         return recipe;
       });
-      renderCreatedCombo(dishes, nutritionOk);
+      renderCreatedCombo(dishes, nutritionOk, data.targetCheck);
     } catch(err){
       showCreateError(err.userMessage || 'レシピの作成に失敗しました。もう一度お試しください。');
     } finally {
