@@ -64,6 +64,10 @@
 
     <p id="create-loading" class="input-hint" hidden style="text-align:center;">レシピを考えています…</p>
     <p id="create-error" class="input-hint" hidden style="text-align:center;color:var(--protein);"></p>
+    <div id="create-log-box" class="log-box" hidden>
+      <p class="input-hint" id="create-log-count"></p>
+      <button type="button" class="reroll log-btn" id="btn-log-download-create">ログをダウンロード</button>
+    </div>
 
     <section class="result" id="create-result" hidden></section>
     <p class="note" id="create-note" hidden>※栄養量は目安です。体調や好みに合わせて調整してください。</p>
@@ -109,6 +113,14 @@
       </div>
       <button class="reroll" id="btn-foods-import" style="margin-top:10px;">成分表を登録する</button>
       <p id="foods-import-msg" class="input-hint" hidden style="text-align:center;"></p>
+
+      <div class="exclude-block" style="margin-top:26px;">
+        <label>エラーログ(管理者のみ)</label>
+        <p class="input-hint">画面で起きたエラー(通信の失敗・AIの失敗・サーバーのエラーなど)を、この端末のメモリに記録しています。ダウンロードしたファイルを共有すると、原因の調査に使えます。ページを閉じるか再読み込みすると消えます。APIキーは記録されません。</p>
+        <p class="input-hint" id="admin-log-count"></p>
+      </div>
+      <button class="reroll" id="btn-log-download-admin" style="margin-top:10px;">ログをダウンロード</button>
+      <button class="reroll" id="btn-log-clear" style="margin-top:10px;">ログを消去</button>
     </div>
   </div>
 
@@ -124,6 +136,7 @@
 <script src="https://unpkg.com/@simplewebauthn/browser@13/dist/bundle/index.umd.min.js"></script>
 <script src="js/config.js"></script>
 <script src="js/utils.js"></script>
+<script src="js/error-log.js"></script>
 <script src="js/save.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/settings.js"></script>
