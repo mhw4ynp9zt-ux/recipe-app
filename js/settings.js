@@ -140,19 +140,76 @@
     }
   }
 
+  // ==== 成分表の登録(管理者専用) ====
+  // data/foods.json(日本食品標準成分表)を100件ずつサーバー(/api/admin/import-foods)へ送ってD1に登録する。
+  // 何度実行しても上書きされるだけ(INSERT OR REPLACE)。栄養計算(nutrition.js)がこのデータを使います。
+  const FOODS_TOTAL = 2538;
+  const FOODS_CHUNK = 100;
+  const foodsStatusEl = document.getElementById('foods-status');
+  const foodsImportBtn = document.getElementById('btn-foods-import');
+  const foodsMsgEl = document.getElementById('foods-import-msg');
+
+  function showFoodsMsg(msg, isError){
+    foodsMsgEl.textContent = msg;
+    foodsMsgEl.hidden = false;
+    foodsMsgEl.style.color = isError ? 'var(--protein)' : 'var(--veg)';
+  }
+
+  async function loadFoodsStatus(){
+    try {
+      const data = await adminFetch('/api/admin/import-foods');
+      foodsStatusEl.textContent = '現在の登録数: ' + data.total + ' 件' +
+        (data.total >= FOODS_TOTAL ? '(登録済みです)' : '(未登録、または一部のみです。下のボタンで登録してください)');
+    } catch(err){
+      foodsStatusEl.textContent = err.message;
+    }
+  }
+
+  async function importFoods(){
+    foodsImportBtn.disabled = true;
+    foodsImportBtn.textContent = '登録中…';
+    showFoodsMsg('データを読み込んでいます…', false);
+    try {
+      const fileRes = await fetch('/data/foods.json');
+      if(!fileRes.ok) throw new Error('data/foods.json が見つかりません。GitHubにアップロードされているか確認してください。');
+      const rows = (await fileRes.json()).rows;
+      if(!Array.isArray(rows) || !rows.length) throw new Error('data/foods.json の形式が正しくありません。');
+      let total = 0;
+      for(let i = 0; i < rows.length; i += FOODS_CHUNK){
+        showFoodsMsg('登録中… ' + Math.min(i + FOODS_CHUNK, rows.length) + ' / ' + rows.length + ' 件', false);
+        const data = await adminFetch('/api/admin/import-foods', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ init: i === 0, rows: rows.slice(i, i + FOODS_CHUNK) }),
+        });
+        total = data.total;
+      }
+      showFoodsMsg('完了しました(登録数: ' + total + ' 件)。「作る」タブでレシピを作成して確認してください。', false);
+      await loadFoodsStatus();
+    } catch(err){
+      showFoodsMsg('失敗しました: ' + err.message + '(もう一度押すと、最初からやり直せます)', true);
+    } finally {
+      foodsImportBtn.disabled = false;
+      foodsImportBtn.textContent = '成分表を登録する';
+    }
+  }
+
   // ログイン状態が変わるたびに auth.js から呼ばれる。管理者のときだけ設定欄を表示する。
   function onAuthChanged(){
     if(isAdmin()){
       adminSectionEl.hidden = false;
       loadAdminSettings();
+      loadFoodsStatus();
     } else {
       adminSectionEl.hidden = true;
       grokApiKeyEl.value = '';
       grokStatusEl.hidden = true;
+      foodsMsgEl.hidden = true;
     }
   }
 
   grokTestBtn.addEventListener('click', testGrokConnection);
   grokSaveBtn.addEventListener('click', saveAdminSettings);
+  foodsImportBtn.addEventListener('click', importFoods);
 
   onAuthChanged();
