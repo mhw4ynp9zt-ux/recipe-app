@@ -392,63 +392,19 @@
 
   [hidden]{display:none !important;}
 
-  /* ==== レシピ作成中のプログレス ==== */
-  .create-progress{
-    margin:0 0 16px;
-    padding:14px 16px;
-    background:var(--card);
-    border:1px solid var(--line);
-    border-radius:14px;
+  /* ==== 栄養の計算内訳(成分表から計算した値の根拠) ==== */
+  .nutrition-warn{
+    margin:8px 0 0; padding:8px 10px; border-radius:8px;
+    background:#fff6e5; color:#8a5a00; font-size:12px; line-height:1.6;
   }
-  .create-progress[hidden]{display:none;}
-  .progress-row{
-    display:flex;
-    align-items:center;
-    gap:12px;
-  }
-  .progress-spinner{
-    width:22px;
-    height:22px;
-    flex-shrink:0;
-    border-radius:50%;
-    border:3px solid var(--veg-bg);
-    border-top-color:var(--veg);
-    animation:progress-spin .8s linear infinite;
-  }
-  @keyframes progress-spin{ to{ transform:rotate(360deg); } }
-  .progress-status{
-    flex:1;
-    min-width:0;
-    font-size:13px;
-    line-height:1.5;
-    color:var(--ink-soft);
-  }
-  .progress-percent{
-    flex-shrink:0;
-    font-size:17px;
-    font-weight:700;
-    color:var(--veg);
-    font-variant-numeric:tabular-nums;
-  }
-  .progress-dishes{list-style:none; margin:10px 0 0; padding:0 0 0 34px;}
-  .progress-dishes:empty{display:none;}
-  .progress-dishes li{
-    display:flex;
-    gap:8px;
-    padding:4px 0 0;
-    font-size:13px;
-    color:var(--ink);
-  }
-  .progress-dishes li.is-writing{color:var(--ink-soft);}
-  .progress-dish-mark{width:1em; flex-shrink:0; color:var(--veg); font-weight:700;}
-  @media (prefers-reduced-motion: reduce){
-    .progress-spinner{animation-duration:2.4s;}
-  }
-
-  /* 栄養計算の補足(AIが成分値を補った食材がある場合など) */
-  .dish-nutrition-note{
-    font-size:11px;
-    line-height:1.6;
-    color:var(--ink-soft);
-    margin:4px 0 0;
-  }
+  .nutrition-detail{margin-top:14px; font-size:13px;}
+  .nutrition-detail summary{cursor:pointer; color:var(--ink-soft); padding:4px 0;}
+  .nutrition-detail ul{list-style:none; margin:6px 0 0; padding:0;}
+  .nutrition-detail li{display:flex; gap:6px; padding:5px 0; border-top:1px dashed var(--line); line-height:1.5;}
+  .nd-name{flex:0 0 42%; font-weight:600;}
+  .nd-arrow{flex:0 0 auto; color:var(--ink-soft);}
+  .nd-food{flex:1 1 auto; word-break:break-all;}
+  .nd-miss{color:#b45309;}
+  .nd-skip{color:var(--ink-soft);}
+  .nd-total{margin:6px 0 0; font-size:12px; line-height:1.6;}
+  .nd-note{margin:8px 0 0; font-size:11px; color:var(--ink-soft); line-height:1.6;}
