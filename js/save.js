@@ -115,6 +115,13 @@
     if(count > 0){ badge.textContent = count; badge.hidden = false; }
     else { badge.hidden = true; }
   }
+
+  // 保存済み一覧の表示用にHTMLの特殊文字を無害化する
+  function escapeSavedHtml(str){
+    return String(str == null ? '' : str).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  }
+
+  // 一覧は「料理名・種類・栄養」だけを並べ、タップで材料と作り方を開く(新しく保存したものが上)
   function renderSavedView(){
     const list = savedCache;
     const emptyEl = document.getElementById('saved-empty');
@@ -125,22 +132,27 @@
       return;
     }
     emptyEl.hidden = true;
-    listEl.innerHTML = list.map(d => `
-      <div class="saved-card">
-        <div class="saved-card-head">
-          <h2>${d.name}</h2>
-          <span class="dish-type-tag">${d.type}</span>
+    listEl.innerHTML = list.slice().reverse().map(d => `
+      <details class="saved-card">
+        <summary>
+          <div class="saved-card-head">
+            <h2>${escapeSavedHtml(d.name)}</h2>
+            <span class="dish-type-tag">${escapeSavedHtml(d.type)}</span>
+          </div>
+          <p class="saved-macro">${NUTRIENT_METRICS.filter(m => d[m.id] != null).map(m => m.label + ' ' + d[m.id] + m.unit).join(' ・ ')}</p>
+          <span class="chev" aria-hidden="true"></span>
+        </summary>
+        <div class="saved-body">
+          <div class="ingredients">
+            <h3>材料</h3>
+            <ul>${(d.ingredients || []).map(x => '<li>' + withPieceCount(escapeSavedHtml(x)) + '</li>').join('')}</ul>
+          </div>
+          <div class="steps">
+            <h3>作り方</h3>
+            <ol>${(d.steps || []).map(x => '<li>' + escapeSavedHtml(x) + '</li>').join('')}</ol>
+          </div>
+          <button type="button" class="remove-saved-btn" data-remove-id="${escapeSavedHtml(d.id)}">このレシピを削除</button>
         </div>
-        <p class="saved-macro">${NUTRIENT_METRICS.filter(m => d[m.id] != null).map(m => m.label + ' ' + d[m.id] + m.unit).join(' ・ ')}</p>
-        <div class="ingredients">
-          <h3>材料</h3>
-          <ul>${d.ingredients.map(x => '<li>' + withPieceCount(x) + '</li>').join('')}</ul>
-        </div>
-        <div class="steps">
-          <h3>作り方</h3>
-          <ol>${d.steps.map(x => '<li>' + x + '</li>').join('')}</ol>
-        </div>
-        <button class="remove-saved-btn" data-remove-id="${d.id}">削除する</button>
-      </div>
+      </details>
     `).join('');
   }

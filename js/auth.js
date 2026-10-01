@@ -9,6 +9,7 @@
 // パスキーは1人1つだけ。ユーザー名の入力はなく、ログイン中は「新規登録」ボタンも表示しません。
 
   let currentUser = null; // { id, isAdmin } | null (ログイン中のユーザー)
+  let sessionChecked = false; // 起動時のログイン状態の確認が済んだか(確認前に「ログインが必要」と出さないため)
 
   // この端末でパスキーを登録またはログインしたことがあるかの目印(二重登録の確認ダイアログ用)
   const PASSKEY_USED_KEY = 'recipeRoulettePasskeyUsedV1';
@@ -44,26 +45,40 @@
     el.style.color = isError ? 'var(--protein)' : 'var(--veg)';
   }
 
+  const ACCOUNT_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.8"/><path d="M4.5 20.5c.8-4 3.8-6 7.5-6s6.7 2 7.5 6"/></svg>';
+
   function renderAuthUI(){
     const box = document.getElementById('account-box');
     if(box){
       if(currentUser){
         box.innerHTML = `
-          <p class="input-hint">ログイン中${currentUser.isAdmin ? '(管理者)' : ''}</p>
-          <button class="reroll" id="btn-logout" style="margin-top:10px;">ログアウト</button>
+          <div class="account-status">
+            <span class="account-avatar">${ACCOUNT_ICON}</span>
+            <div>
+              <p>ログイン中${currentUser.isAdmin ? '(管理者)' : ''}</p>
+              <p class="input-hint">AIでのレシピ作成と、レシピの保存が使えます。</p>
+            </div>
+          </div>
+          <button type="button" class="btn btn-ghost" id="btn-logout">ログアウト</button>
+          <p id="auth-status" class="status-line" hidden></p>
         `;
         document.getElementById('btn-logout').addEventListener('click', logout);
       } else {
         box.innerHTML = `
-          <p class="input-hint">はじめての方は「パスキーで新規登録」、登録済みの方は「パスキーでログイン」を押してください。パスキーは1人1つだけ作成できます。</p>
-          <button class="reroll" id="btn-register" style="margin-top:10px;">パスキーで新規登録</button>
-          <button class="reroll" id="btn-login" style="margin-top:10px;">パスキーでログイン</button>
-          <p id="auth-status" class="input-hint" hidden style="text-align:center;"></p>
+          <div class="btn-stack">
+            <button type="button" class="btn btn-primary" id="btn-login">パスキーでログイン</button>
+            <button type="button" class="btn btn-secondary" id="btn-register">はじめての方:パスキーで新規登録</button>
+          </div>
+          <p class="input-hint">パスキーは1人1つだけ作成できます。登録済みの方は「パスキーでログイン」を押してください。</p>
+          <p id="auth-status" class="status-line" hidden></p>
         `;
         document.getElementById('btn-register').addEventListener('click', register);
         document.getElementById('btn-login').addEventListener('click', login);
       }
     }
+    // 「作る」タブの「ログインが必要です」のお知らせ(ログイン状態の確認が済んでから出す)
+    const banner = document.getElementById('login-banner');
+    if(banner) banner.hidden = !sessionChecked || !!currentUser;
     // 管理者用の設定欄(settings.js)の表示・非表示を更新する
     if(typeof onAuthChanged === 'function') onAuthChanged();
   }
@@ -173,6 +188,7 @@
       recordAuthError('session', e);
       currentUser = null;
     }
+    sessionChecked = true;
     renderAuthUI();
     await reloadSaved();
   }

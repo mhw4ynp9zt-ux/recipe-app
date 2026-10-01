@@ -13,6 +13,9 @@
 
   const createResultEl = document.getElementById('create-result');
   const createLoadingEl = document.getElementById('create-loading');
+  // 待機中の文言を入れる要素(無い古い画面では create-loading 自体に入れる)
+  const createLoadingTextEl = document.getElementById('create-loading-text') || createLoadingEl;
+  const createLoadingSubEl = document.getElementById('create-loading-sub');
   const createErrorEl = document.getElementById('create-error');
   const createNoteEl = document.getElementById('create-note');
   const generateBtn = document.getElementById('btn-generate');
@@ -27,56 +30,32 @@
   function hideCreateError(){
     createErrorEl.hidden = true;
   }
-  // ==== 作成中の進捗表示 ====
-  // サーバーは1回の通信で結果を返すため、実際の進み具合は分かりません。
-  // そこで経過時間に応じて「いまやっていること」を段階的に表示し、待ち時間を短く感じてもらいます。
-  // バーは100%に近づくほどゆっくり進み(完了前に100%にはならない)、結果が返った時点で100%にします。
-  const CREATE_STEPS = [
-    { label: '食材と条件を整理しています', at: 0 },
-    { label: 'AIがレシピを考えています', at: 3 },
-    { label: '食品成分表で栄養を計算しています', at: 14 },
-    { label: '目標に収まるか確認・調整しています', at: 24 },
-  ];
-  const cpStatusEl = document.getElementById('cp-status');
-  const cpFillEl = document.getElementById('cp-fill');
-  const cpPercentEl = document.getElementById('cp-percent');
-  const cpElapsedEl = document.getElementById('cp-elapsed');
-  const cpStepsEl = document.getElementById('cp-steps');
-  const cpNoteEl = document.getElementById('cp-note');
-  const CP_DEFAULT_NOTE = cpNoteEl.textContent;
-  let cpTimer = null;
+  const CREATE_LOADING_TEXT = 'レシピを考えています…(画面を開いたままお待ちください)';
 
-  function renderCreateProgress(startedAt){
-    const sec = (Date.now() - startedAt) / 1000;
-    const pct = Math.min(95, 95 * (1 - Math.exp(-sec / 18)));
-    let idx = 0;
-    CREATE_STEPS.forEach((s, i) => { if(sec >= s.at) idx = i; });
-    cpFillEl.style.width = pct.toFixed(1) + '%';
-    cpPercentEl.textContent = Math.floor(pct) + '%';
-    cpElapsedEl.textContent = '経過 ' + Math.floor(sec) + '秒';
-    cpStatusEl.textContent = CREATE_STEPS[idx].label + '…';
-    Array.from(cpStepsEl.children).forEach((li, i) => {
-      li.className = i < idx ? 'done' : (i === idx ? 'active' : '');
-    });
-    if(sec > 40) cpNoteEl.textContent = '少し時間がかかっています。もう少しお待ちください';
+  // 待っている間の経過秒数表示(長い待ち時間でも「動いている」ことが分かるように)
+  let loadingActive = false;
+  let loadingStartedAt = 0;
+  function tickLoading(){
+    if(!loadingActive || !createLoadingSubEl) return;
+    const sec = Math.floor((Date.now() - loadingStartedAt) / 1000);
+    createLoadingSubEl.textContent = 'AIによる作成と、成分表での栄養計算を行っています(経過 ' + sec + ' 秒)';
+    setTimeout(tickLoading, 1000);
   }
-  function startCreateProgress(){
-    cpStepsEl.innerHTML = CREATE_STEPS.map(s => '<li>' + s.label + '</li>').join('');
-    cpNoteEl.textContent = CP_DEFAULT_NOTE;
-    const startedAt = Date.now();
-    renderCreateProgress(startedAt);
-    cpTimer = setInterval(() => renderCreateProgress(startedAt), 500);
-  }
-  function stopCreateProgress(){
-    if(cpTimer){ clearInterval(cpTimer); cpTimer = null; }
-  }
+
   function setCreateLoading(isLoading){
-    stopCreateProgress();
-    if(isLoading) startCreateProgress();
+    if(isLoading) createLoadingTextEl.textContent = CREATE_LOADING_TEXT;
     createLoadingEl.hidden = !isLoading;
     generateBtn.disabled = isLoading;
-    generateBtn.style.opacity = isLoading ? '0.6' : '1';
     generateBtn.textContent = isLoading ? '作成中…' : 'レシピを作成する';
+    const wasActive = loadingActive;
+    loadingActive = isLoading;
+    if(isLoading && !wasActive){
+      loadingStartedAt = Date.now();
+      tickLoading();
+      if(typeof createLoadingEl.scrollIntoView === 'function') createLoadingEl.scrollIntoView({behavior:'smooth', block:'center'});
+    } else if(!isLoading && createLoadingSubEl){
+      createLoadingSubEl.textContent = '';
+    }
   }
 
   function getCreateCount(){
@@ -124,7 +103,7 @@
     return target;
   }
 
-  // 入力中の目標値・品数に応じてヒント文言を更新する
+  // 入力中の目標値・品数に応じてヒント文言(作成ボタンの上の要約)を更新する
   function updateCreateHint(){
     const t = getCreateTarget();
     const active = getActiveMetrics();
@@ -136,17 +115,27 @@
     createHintEl.textContent = '全' + t.count + '品の合計で、' + parts.join('・') + 'を目安にレシピを考えます。';
   }
 
+  // 入力欄の値を指標ごとに覚えておき、指標のON/OFFで描画し直しても入力した値が消えないようにする
+  const typedTargets = {};
+
   // 選択中の指標に応じて、数値目標の入力欄(target-row)を描画し直す
   function renderTargetInputs(){
     const active = getActiveMetrics();
     targetRowEl.innerHTML = active.map(m => `
-      <div class="option-group">
-        <label class="option-label" for="create-target-${m.id}">${m.label}(${m.unit})</label>
-        <input type="number" id="create-target-${m.id}" inputmode="numeric" min="0" value="${m.default}">
+      <div class="target-item m-${m.id}">
+        <label class="option-label" for="create-target-${m.id}">${m.label}</label>
+        <div class="target-input">
+          <input type="number" id="create-target-${m.id}" inputmode="numeric" min="0" value="${typedTargets[m.id] != null ? typedTargets[m.id] : m.default}">
+          <span class="target-unit">${m.unit}</span>
+        </div>
       </div>
     `).join('');
     active.forEach(m => {
-      document.getElementById('create-target-' + m.id).addEventListener('input', updateCreateHint);
+      const input = document.getElementById('create-target-' + m.id);
+      input.addEventListener('input', () => {
+        typedTargets[m.id] = input.value;
+        updateCreateHint();
+      });
     });
     updateCreateHint();
   }
@@ -154,7 +143,7 @@
   // トグルチップ自体を描画し直す(ON/OFFの見た目を反映)
   function renderMetricToggles(){
     metricToggleRowEl.innerHTML = NUTRIENT_METRICS.map(m =>
-      `<button type="button" class="metric-toggle-btn${enabledMetrics[m.id] ? ' active' : ''}" data-metric="${m.id}">${m.label}</button>`
+      `<button type="button" class="metric-toggle-btn m-${m.id}${enabledMetrics[m.id] ? ' active' : ''}" data-metric="${m.id}" aria-pressed="${enabledMetrics[m.id] ? 'true' : 'false'}">${m.label}</button>`
     ).join('');
   }
 
@@ -245,18 +234,18 @@
     createResultEl.hidden = false;
     createResultEl.innerHTML = `
       <div class="recipe-card">
-        <p class="recipe-tag">入力した内容からAIが作成</p>
-        <div class="badges">
+        <p class="recipe-tag">${dishes.length > 1 ? '全' + dishes.length + '品の合計' : 'AIが作成したレシピ'}</p>
+        ${shown.length ? `<div class="badges">
           ${shown.map(m => {
             const total = roundNutrient(dishes.reduce((s, d) => s + (d[m.id] || 0), 0));
-            return `<span class="badge ${m.id}${offIds.has(m.id) ? ' off' : ''}">${m.label}(合計) ${total}${m.unit}</span>`;
+            return `<span class="badge ${m.id}${offIds.has(m.id) ? ' off' : ''}"><span class="badge-label">${m.label}</span><span class="badge-val">${total}<small>${m.unit}</small></span></span>`;
           }).join('')}
-        </div>
+        </div>` : ''}
         ${nutritionOk ? renderTargetCheck(targetCheck) : ''}
         ${dishes.map((d, i) => `
           <div class="dish-block">
             <div class="dish-head">
-              <h2>${dishes.length > 1 ? (i + 1) + '. ' : ''}${escapeHtml(d.name)}</h2>
+              <h2>${dishes.length > 1 ? '<span class="dish-num">' + (i + 1) + '</span>' : ''}${escapeHtml(d.name)}</h2>
               <span class="dish-type-tag">${escapeHtml(d.type)}</span>
             </div>
             <p class="dish-macro">${shown.filter(m => d[m.id] != null).map(m => m.label + ' ' + d[m.id] + m.unit).join(' ・ ')}</p>
@@ -273,13 +262,16 @@
             ${renderNutritionDetail(d)}
           </div>
         `).join('')}
+        <div class="result-actions">
+          <button type="button" class="btn btn-secondary regen-btn">同じ条件でもう一度作る</button>
+        </div>
       </div>
     `;
     createNoteEl.textContent = nutritionOk
       ? '※栄養量は、AIが示した食材と重さをもとに、日本食品標準成分表(八訂)増補2023年から計算した値です。体調や好みに合わせて調整してください。'
       : '※栄養量を計算できませんでした(成分表のデータが準備できていない可能性があります)。管理者に連絡してください。';
     createNoteEl.hidden = false;
-    createResultEl.scrollIntoView({behavior:'smooth', block:'nearest'});
+    createResultEl.scrollIntoView({behavior:'smooth', block:'start'});
   }
 
   async function generateRecipe(){
@@ -330,7 +322,7 @@
             request: logContext.request, message: netErr.message,
             elapsedMs: Date.now() - startedAt, wasHidden: wasHidden,
           });
-          cpNoteEl.textContent = '通信が切れたため、もう一度試しています…';
+          createLoadingTextEl.textContent = '通信が切れたため、もう一度試しています…';
         }
       }
       logContext.status = response.status;
@@ -394,7 +386,6 @@
         recipes.push(recipe);
         return recipe;
       });
-      cpFillEl.style.width = '100%'; cpPercentEl.textContent = '100%';
       renderCreatedCombo(dishes, nutritionOk, data.targetCheck);
     } catch(err){
       logContext.elapsedMs = Date.now() - startedAt;
@@ -409,8 +400,12 @@
 
   generateBtn.addEventListener('click', generateRecipe);
 
-  // 保存ボタン(作成タブの結果カード内、イベント委任)
+  // 結果カード内のボタン(保存・もう一度作る)はイベント委任で扱う
   createResultEl.addEventListener('click', (e) => {
+    if(e.target.closest('.regen-btn')){
+      if(!generateBtn.disabled) generateRecipe();
+      return;
+    }
     const btn = e.target.closest('.save-btn');
     if(!btn) return;
     const id = btn.dataset.id;
