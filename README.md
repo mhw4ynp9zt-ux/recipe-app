@@ -22,6 +22,8 @@ js/
   settings.js                    管理者用のAI設定欄(管理者のときだけ表示)
   tabs.js                        タブ切り替え
   create-ai.js                   「作る」タブ。条件をサーバーへ送ってAIレシピを表示
+  recipe-edit-core.js            レシピ編集・自作の処理(入力の整形、プレビュー計算の遅延、保存)。通信は注入された fetch だけ
+  recipe-edit.js                 レシピ編集・自作の画面(自作ボタンと編集シートを実行時に差し込む)
   main.js                        初期化
 functions/_lib/
   session.js                     Cookie・セッション・チャレンジ・管理者判定・Origin確認
@@ -31,11 +33,19 @@ functions/_lib/
   debug-trace.js                 管理者だけに返すデバッグ情報(失敗の詳細)の収集と、APIキーの伏せ字処理
   nutrition.js                   AIが返した食材を成分表に照合し、栄養量を計算
   foods-import.js / foods-schema.js  成分表の取り込み処理とテーブル定義(foods-schemaは自動生成)
+  recipe-edit.js                 編集・自作の入力検査と正規化(AIは呼ばない)
 functions/api/auth/              認証API 6本(register-options / register-verify / login-options / login-verify / logout / me)
 functions/api/recipes.js         レシピ一覧取得・保存
-functions/api/recipes/[id].js    レシピ削除
+functions/api/recipes/[id].js    レシピ削除・編集の上書き保存(PUT)
+functions/api/recipes/calc.js    編集中のプレビュー栄養計算(保存しない)
+functions/api/recipes/custom.js  自作レシピの新規保存
 functions/api/admin/             管理者専用API(ai-settings.js、ai-test.js、import-foods.js)
 functions/api/ai/create-recipe.js  ログインユーザー向けAIレシピ作成
+test/
+  recipe-edit-*_test.mjs         レシピ編集・自作のテスト7本(npm run test:edit。fetch はテストの中でスタブにする)
+  edit_env.mjs                   上のテスト用のDBと環境(node:sqlite のメモリDBでD1を再現。ログインCookie・リクエストの組み立て)
+  fixtures/                      テスト用の小さな成分表(foods-mini.sql)とテーブル定義(app-schema.sql)
+docs/                            設計書(RECIPE-EDIT.md など)
 ```
 
 ## 仕様の要点
@@ -45,6 +55,9 @@ functions/api/ai/create-recipe.js  ログインユーザー向けAIレシピ作�
 - **AI設定**: APIキー・モデル・1日の上限は管理者だけが設定できる。APIキーはAES-GCMで暗号化してD1に保存し、ブラウザには返さない。
 - **エラーログ(管理者のみ)**: 画面でエラーが起きると、管理者には「ログをダウンロード」ボタンが出ます(「作る」タブのエラー表示の下と、「設定」タブの管理者欄)。詳細は下の「エラーログ」を参照。
 - **AIの利用**: ログインユーザーのみ。呼び出しはサーバーが行い、プロンプトもサーバーで組み立てる。アプリ全体で1日の利用回数に上限がある(初期値50回、日本時間で毎日リセット)。失敗した回は回数に数えない。
+- **レシピの編集・自作入力**: 保存済みレシピの編集と、自分で材料・作り方を入力する自作ができる(ログイン必須)。編集・自作はAIを一切呼ばない。栄養値は入力値を信用せず、サーバーが必ず成分表から再計算する。成分表に無い食材だけ栄養値を手入力でき、その値は「その行のグラム数ぶんの合計」(100gあたりではない)。保存は「上書き」と「別名で保存」を選べる。テストは `npm run test:edit` で、通信はすべてスタブのため外部には接続しない。
+
+> 注意: 成分表のSQL(`db/schema.sql`、`db/migration-003-foods.sql`、`db/seed-foods.sql`)は、このリポジトリのスナップショットには含まれていない。下の設定手順は、これらがそろった完全なリポジトリを前提にしている。成分表の全件が要る古いテスト6本(`test/e2e_test.mjs` `test/match_test.mjs` `test/calc_test.mjs` `test/import_test.mjs` `test/settings-ui_test.mjs` `test/error-log-server_test.mjs`)は、これらが無いと動かない。また `test/error-log-client_test.mjs` は、この機能を入れる前から失敗していた。
 
 ## 設定手順
 

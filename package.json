@@ -5,7 +5,9 @@
     "dev": "wrangler pages dev . --d1=DB",
     "deploy": "wrangler pages deploy .",
     "test:job": "node test/job_test.mjs && node test/create-ui_job_test.mjs",
-    "test:excluded": "node test/excluded-foods_test.mjs"
+    "test:excluded": "node test/excluded-foods_test.mjs",
+    "test:dishes": "node test/dishes_test.mjs && node test/multi-field_test.mjs && node test/create-dishes_test.mjs",
+    "test:edit": "node test/recipe-edit-nutrition_test.mjs && node test/recipe-edit-lib_test.mjs && node test/recipe-edit-api_test.mjs && node test/recipe-edit-core_test.mjs && node test/recipe-edit-ui_test.mjs && node test/recipe-edit-env_test.mjs && node test/recipe-edit-contract_test.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.0"
