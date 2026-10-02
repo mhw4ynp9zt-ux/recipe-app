@@ -39,6 +39,8 @@ const TOLERANCE_EPS = 1e-6; // 10.0000001% のような浮動小数の誤差で�
 const ALLOWED_COUNTS = [1, 2, 3];
 const MAX_INGREDIENTS_LEN = 500; // 1品あたり(従来の全品共通の入力も同じ)
 const MAX_MOOD_LEN = 300;        // 1品あたり(従来の全品共通の入力も同じ)
+// 所要時間の指定(分)。js/config.js の TIME_LIMIT_OPTIONS と同じ内容に保つ(テストで一致を確認)
+const MAX_MINUTES_OPTIONS = [10, 30, 45, 60];
 
 function cleanText(value) {
   // 改行などの制御文字は空白にしてプロンプトを崩されないようにする
@@ -112,8 +114,16 @@ function parseCreateRequest(body) {
     metrics.push({ id, label: METRICS[id].label, unit: METRICS[id].unit, target: v });
   }
 
+  // 所要時間(全品を同時進行で作り終える上限の分)。無い(null/未指定)なら制限なし。値は選択肢のどれかだけ
+  let maxMinutes;
+  if (body.maxMinutes !== undefined && body.maxMinutes !== null) {
+    if (!MAX_MINUTES_OPTIONS.includes(body.maxMinutes)) return { error: "所要時間の指定が不正です" };
+    maxMinutes = body.maxMinutes;
+  }
+
   const value = { ingredients, mood, count, metrics };
   if (dishes) value.dishes = dishes;
+  if (maxMinutes !== undefined) value.maxMinutes = maxMinutes;
   return { value };
 }
 
@@ -163,6 +173,23 @@ function dishSpecsOf(req) {
   return Array.isArray(req.dishes) && req.dishes.length ? req.dishes : [];
 }
 
+// 美味しさを最優先にするための指示(1回目のプロンプトに入る)。
+// 栄養の目標・食材の指定・「必ず守る条件」は今までどおり守らせたうえで、その範囲でいちばん美味しい料理を考えさせる。
+// 注意: 「使わない食材」という文言は入れない(登録が無いときは、プロンプトにその語が現れないことをテストで確認している)。
+const TASTE_SECTION =
+  '【美味しさを最優先】\n' +
+  '・このレシピでいちばん大切なのは「本当に美味しいこと」です。食べた人が「また作りたい」と思う味を目指してください。\n' +
+  '・栄養の目標は、まず美味しい料理を考えてから、材料の grams を増減して合わせる。目標に合わせるために、味が悪くなる食材の組み合わせ・不自然な食材の追加・極端な分量にはしない\n' +
+  '・美味しいと広く知られている定番の組み合わせ・味付けをベースにする。奇抜さや珍しさより、確かな美味しさを優先する\n' +
+  '・味に、旨味(だし・きのこ・トマト・肉や魚の香ばしさなど)、塩味、香り(香味野菜・薬味・香辛料)、コク、酸味やさっぱり感のバランスを持たせ、ぼんやりした味や、ただ薄いだけの味にしない\n' +
+  '・食感に変化をつける(カリッ・とろり・シャキッ・ほくほくなど)。2品以上のときは、主菜・副菜・汁物で味の方向性や食感が重ならないようにする\n' +
+  '・調味料は味がしっかり決まる量にする(控えすぎない)。塩分に目標があるときは、その範囲の中で、酸味・香り・旨味・コクを使って満足感を出す\n' +
+  '・ただし、食材の指定・栄養の目標・下の【必ず守る条件】は、美味しさのためでも破らない。その範囲で最も美味しい料理にする\n\n';
+
+// 作り直しの依頼文に入れる、美味しさを保つための一文
+const TASTE_KEEP =
+  '・分量を調整するときも、味のバランスと美味しさを保つ。目標に合わせるためだけに不自然な食材を足したり、味が落ちる極端な分量にしたりしない。\n';
+
 function buildPrompt(req) {
   const { ingredients, mood, count, metrics } = req;
   const excluded = excludedOf(req);
@@ -194,6 +221,10 @@ function buildPrompt(req) {
   const excludedRule = excluded.length
     ? '・上の【使わない食材】は、主材料・副材料・調味料・だし・飾りのどれにも一切使わない。「豚肉」のような大きな分類が書かれていたら、ロース・バラ・ひき肉など、その分類に含まれるすべての部位・種類も使わない。使いたい食材や雰囲気の指定と重なる場合も、使わない食材を優先する\n'
     : '';
+  // 所要時間の指定(あるときだけ)。AIには「全品を同時進行で」の上限として伝える
+  const timeRule = MAX_MINUTES_OPTIONS.includes(req.maxMinutes)
+    ? '・全品を同時進行で作って' + req.maxMinutes + '分以内に終わる料理にする(下ごしらえ・加熱を含む)\n'
+    : '';
 
   // 食材・雰囲気の指定。品ごとの指定があるときは「各品の指定」に、無いときは従来の全品共通の2項目にする
   const specSection = dishSpecs.length
@@ -218,12 +249,14 @@ function buildPrompt(req) {
     specSection +
     excludedSection +
     moodSection +
+    TASTE_SECTION +
     '【栄養の目標】\n' + targetText + '\n\n' +
     '【品数】\n' + countText + '\n\n' +
     '【必ず守る条件】\n' +
     excludedRule +
     dishRule +
     genreRule +
+    timeRule +
     '・油はごま油かオリーブオイルのみ使用する(サラダ油などの他の植物油は使わない)\n' +
     '・ハム・ソーセージ・ベーコンなどの加工肉は使わない\n' +
     '・家庭で無理なく作れる、実在感のある料理にする\n' +
@@ -233,7 +266,7 @@ function buildPrompt(req) {
     '・grams は、皮・骨・種・ヘタなどを除いて実際に食べる部分(正味)の重さを、g単位の数値で入れる。個数・大さじ・少々・適量も目安のgに換算する(例: 塩少々=0.5、しょうゆ大さじ1=18、砂糖大さじ1=9、油大さじ1=12)。水やお湯は 0 にする\n' +
     '・food は、文部科学省「日本食品標準成分表(八訂)」の食品名の表記に合わせ、スペース区切りで書く。生の食材は末尾に「生」を付ける。ひらがな・カタカナも成分表の表記に合わせる(例: "たまねぎ りん茎 生"、"にんじん 根 皮なし 生"、"ぶた ロース 脂身つき 生"、"にわとり むね 皮なし 生"、"鶏卵 全卵 生"、"こいくちしょうゆ"、"食塩"、"オリーブ油")。水など成分表にないものは空文字にする\n' +
     '・栄養量はこちらで成分表から計算するため、出力しない\n' +
-    '・各品の手順は3〜6ステップ程度で具体的に書く\n' +
+    '・各品の手順は4〜7ステップ程度で具体的に書く。下味・火加減・加熱時間・焼き色・味付けのタイミングなど、美味しく仕上げるコツも手順に入れる\n' +
     '・ガスコンロ(フライパン・鍋など)を使う料理は全品の中で1品までにする(スープ類はスープメーカー使用として対象外)\n' +
     soupRule + '\n' +
     '出力は必ずちょうど' + count + '個の要素を持つ、以下の形式のJSON配列のみとしてください(キーはこの通りに、値は日本語で入れる):\n' +
@@ -243,6 +276,7 @@ function buildPrompt(req) {
     '    "type": "鍋・炒め物・丼・サラダ・スープ・プレート・サンド・中華・カレー・パスタ・ご飯もの・煮物・洋食のいずれか、最も近いもの",\n' +
     '    "genre": "' + GENRES.join('・') + 'のいずれか、最も近いもの",\n' +
     '    "role": "' + ROLES.join('・') + 'のいずれか、献立での役割",\n' +
+    '    "minutes": 所要時間の分(整数。下ごしらえ・加熱を含む),\n' +
     '    "ingredients": [\n' +
     '      { "name": "食材名", "amount": "分量の表記", "grams": 正味のg(数値), "food": "成分表の食品名" }\n' +
     '    ],\n' +
@@ -283,6 +317,7 @@ function buildRetryPrompt(req, dishes, check, hits = []) {
       '・上の食材を取り除き、別の食材に置き換えて作り直してください。置き換えたあとも、すべての目標が目標値の±' + aimPct + '%以内に入るよう、材料の grams を調整してください。\n' +
       '・料理の方向性はできるだけ保ってください。\n' +
       '・amount の表記も、grams に合わせて直してください。\n' +
+      TASTE_KEEP +
       excludedKeep +
       dishKeep +
       '・「必ず守る条件」と出力形式は最初の依頼のとおりです。JSON配列のみを出力し、前置き・コードブロック記号はつけないでください。';
@@ -329,6 +364,7 @@ function buildRetryPrompt(req, dishes, check, hits = []) {
     '・ある栄養素の調整は他の栄養素にも影響します。範囲内だった栄養素が外れないよう、全体を計算し直してください。\n' +
     '・料理の方向性はできるだけ保ち、重さの調整で足りないときに限って、食材の追加・入れ替えをしてください。\n' +
     '・amount の表記も、grams に合わせて直してください。\n' +
+    TASTE_KEEP +
     excludedKeep +
     dishKeep +
     '・「必ず守る条件」と出力形式は最初の依頼のとおりです。JSON配列のみを出力し、前置き・コードブロック記号はつけないでください。';
@@ -411,9 +447,11 @@ function parseDishes(content, req) {
     // 系統・役割は、選択肢にある値のときだけ付ける(範囲外・欠けた値は項目ごと無し。エラーにはしない)
     if (typeof item.genre === "string" && GENRES.includes(item.genre.trim())) dish.genre = item.genre.trim();
     if (typeof item.role === "string" && ROLES.includes(item.role.trim())) dish.role = item.role.trim();
+    // 所要時間(分)は、1〜240の整数のときだけ付ける(欠けた値・範囲外は項目ごと無し。エラーにはしない)
+    if (typeof item.minutes === "number" && Number.isInteger(item.minutes) && item.minutes >= 1 && item.minutes <= 240) dish.minutes = item.minutes;
     if (!dish.ingredients.length || !dish.steps.length) throw new Error("empty ingredients or steps");
     return dish;
   });
 }
 
-export { parseCreateRequest, buildPrompt, buildRetryPrompt, checkTargets, maxTokensFor, parseDishes, TOLERANCE, AIM_TOLERANCE };
+export { MAX_MINUTES_OPTIONS, parseCreateRequest, buildPrompt, buildRetryPrompt, checkTargets, maxTokensFor, parseDishes, TOLERANCE, AIM_TOLERANCE };
