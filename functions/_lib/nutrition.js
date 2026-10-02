@@ -438,6 +438,19 @@ async function attachNutrition(env, dishes, activeIds) {
         ing.match = null;
         return;
       }
+      if (!m && ing.manual && typeof ing.manual === "object") {
+        // 成分表に無い食材の手入力。値は「この行のグラム数ぶんの合計値」(100gあたりではない)
+        const contrib = {};
+        METRIC_IDS.forEach((id) => {
+          const v = ing.manual[id];
+          contrib[id] = 0;
+          if (typeof v === "number" && Number.isFinite(v)) { totals[id] += v; contrib[id] = v; }
+          else if (activeIds.includes(id)) missing.add(ing.name); // 入力されなかった指標は0として扱う
+        });
+        ing.match = { foodNo: null, label: "手入力", manual: true };
+        Object.defineProperty(ing, "contrib", { value: contrib, enumerable: false, writable: true, configurable: true });
+        return;
+      }
       if (!m) {
         unmatched.push(ing.name);
         ing.match = null;
