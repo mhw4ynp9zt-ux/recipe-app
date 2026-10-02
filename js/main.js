@@ -12,6 +12,14 @@
     removeSaved(btn.dataset.removeId);
   });
 
+  // 編集ボタン(保存済み一覧、イベント委任)。編集シートは recipe-edit.js。ログイン中だけ開く
+  document.getElementById('saved-list').addEventListener('click', (e) => {
+    const btn = e.target.closest('.edit-saved-btn');
+    if(!btn || btn.disabled || !isLoggedIn()) return;
+    const recipe = getSaved().find(r => r.id === btn.dataset.editId);
+    if(recipe) openRecipeEditor({ mode: 'edit', recipe });
+  });
+
   // 保存済み一覧の検索欄(レシピ名・食材の部分一致)。
   // 「保存済み」画面の、タイトルと一覧の間にここで差し込みます(index.html は変更不要)。
   // 欄の表示・非表示と絞り込みは save.js の renderSavedView が行います(保存済みが0件のときは欄ごと隠れます)。

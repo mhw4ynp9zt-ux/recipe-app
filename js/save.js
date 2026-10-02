@@ -3,6 +3,7 @@
 // isSaved/toggleSaveは今までどおり同期関数のまま使えるように、
 // savedCacheというメモリ上のキャッシュを介して読み書きします。
 // utils.js の withPieceCount、config.js の NUTRIENT_METRICS、auth.js の isLoggedIn に依存します。
+// replaceSaved は編集シート(recipe-edit.js)が保存に成功したときに呼びます。カードの「編集」ボタンはログイン中だけ押せます。
 // 保存済み一覧の「栄養の計算内訳」は、create-ai.js の renderNutritionDetail/renderNutritionWarn を再利用して表示します
 // (「作る」タブの結果と同じ見た目。内訳は保存時にレシピ本体と一緒に保存されたデータを使います)。
 // サーバーへの保存・削除・取得の失敗は、error-log.js の logError で管理者向けエラーログに記録します
@@ -111,6 +112,15 @@
     renderSavedView();
     updateSavedCountBadge();
   }
+  // 編集シートで保存したレシピ(サーバーが再計算して返したもの)に、キャッシュの同じidの要素を置き換える。
+  // 無ければ新規として追加する(一覧は新しいものが上に出る)。サーバーへの保存は呼び出し側が済ませている。
+  function replaceSaved(recipe){
+    const idx = savedCache.findIndex(r => r.id === recipe.id);
+    if(idx >= 0) savedCache[idx] = recipe;
+    else savedCache.push(recipe);
+    renderSavedView();
+    updateSavedCountBadge();
+  }
   function updateSavedCountBadge(){
     const count = savedCache.length;
     const badge = document.getElementById('saved-count');
@@ -169,6 +179,9 @@
     const countEl = document.getElementById('saved-search-count');
     const noMatchEl = document.getElementById('saved-no-match');
     const rawQuery = inputEl ? inputEl.value : '';
+    const loggedIn = isLoggedIn();
+    // 「自作レシピを作る」ボタンの有効・無効もログイン状態に合わせる(recipe-edit.js。ログイン・ログアウトの再描画でここを通る)
+    if(typeof refreshNewRecipeButton === 'function') refreshNewRecipeButton();
 
     if(!all.length){
       emptyEl.hidden = false;
@@ -218,7 +231,11 @@
             <ol>${(d.steps || []).map(x => '<li>' + escapeSavedHtml(x) + '</li>').join('')}</ol>
           </div>
           ${renderSavedNutrition(d)}
-          <button type="button" class="remove-saved-btn" data-remove-id="${escapeSavedHtml(d.id)}">このレシピを削除</button>
+          <div class="saved-actions">
+            <button type="button" class="edit-saved-btn" data-edit-id="${escapeSavedHtml(d.id)}"${loggedIn ? '' : ' disabled'}>編集</button>
+            <button type="button" class="remove-saved-btn" data-remove-id="${escapeSavedHtml(d.id)}">このレシピを削除</button>
+          </div>
+          ${loggedIn ? '' : '<p class="edit-login-hint">ログインすると編集できます</p>'}
         </div>
       </details>
     `).join('');
