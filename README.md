@@ -14,7 +14,9 @@ db/seed-foods.sql                成分表のデータ(wrangler用。2,538食品
 data/foods.json                  成分表のデータ(ブラウザ取り込み用)
 scripts/build_foods_sql.py       成分表のExcel → 上の2つのSQLを作るスクリプト
 js/
-  config.js                      栄養指標の定義(NUTRIENT_METRICS)
+  config.js                      栄養指標の定義(NUTRIENT_METRICS)と、分類の選択肢(GENRES / ROLES / MAINS)
+  recipe-classify.js             保存済みレシピの分類の読み出し(主材料の自動判定)と絞り込みの判定。DOMを持たない純粋な関数
+  saved-filter.js                保存済み一覧のチップ・栄養範囲欄・カードのタグの描画と結線(HTMLと見た目は実行時に差し込む)
   utils.js                       共通関数
   error-log.js                   管理者向けエラーログ(記録・ダウンロード)。他のファイルの失敗もここに集まる
   save.js                        保存済みレシピの読み書き(ログイン中はサーバー、未ログインはlocalStorage)
@@ -33,7 +35,8 @@ functions/_lib/
   debug-trace.js                 管理者だけに返すデバッグ情報(失敗の詳細)の収集と、APIキーの伏せ字処理
   nutrition.js                   AIが返した食材を成分表に照合し、栄養量を計算
   foods-import.js / foods-schema.js  成分表の取り込み処理とテーブル定義(foods-schemaは自動生成)
-  recipe-edit.js                 編集・自作の入力検査と正規化(AIは呼ばない)
+  recipe-edit.js                 編集・自作の入力検査と正規化(AIは呼ばない)。系統・役割・主材料の検査もここ
+  taxonomy.js                    分類の選択肢(GENRES / ROLES / MAINS。js/config.js と同じ内容に保つ)
 functions/api/auth/              認証API 6本(register-options / register-verify / login-options / login-verify / logout / me)
 functions/api/recipes.js         レシピ一覧取得・保存
 functions/api/recipes/[id].js    レシピ削除・編集の上書き保存(PUT)
@@ -43,6 +46,8 @@ functions/api/admin/             管理者専用API(ai-settings.js、ai-test.js�
 functions/api/ai/create-recipe.js  ログインユーザー向けAIレシピ作成
 test/
   recipe-edit-*_test.mjs         レシピ編集・自作のテスト7本(npm run test:edit。fetch はテストの中でスタブにする)
+  genre-*_test.mjs               分類・絞り込みのテスト(npm run test:genre。no-network.mjs で外部通信を遮断)
+  no-network.mjs                 import するだけで fetch / http / https を遮断する(検証中にAIなどへ接続しないため)
   edit_env.mjs                   上のテスト用のDBと環境(node:sqlite のメモリDBでD1を再現。ログインCookie・リクエストの組み立て)
   fixtures/                      テスト用の小さな成分表(foods-mini.sql)とテーブル定義(app-schema.sql)
 docs/                            設計書(RECIPE-EDIT.md など)
@@ -58,6 +63,8 @@ docs/                            設計書(RECIPE-EDIT.md など)
 - **レシピの編集・自作入力**: 保存済みレシピの編集と、自分で材料・作り方を入力する自作ができる(ログイン必須)。編集・自作はAIを一切呼ばない。栄養値は入力値を信用せず、サーバーが必ず成分表から再計算する。成分表に無い食材だけ栄養値を手入力でき、その値は「その行のグラム数ぶんの合計」(100gあたりではない)。保存は「上書き」と「別名で保存」を選べる。テストは `npm run test:edit` で、通信はすべてスタブのため外部には接続しない。
 
 > 注意: 成分表のSQL(`db/schema.sql`、`db/migration-003-foods.sql`、`db/seed-foods.sql`)は、このリポジトリのスナップショットには含まれていない。下の設定手順は、これらがそろった完全なリポジトリを前提にしている。成分表の全件が要る古いテスト6本(`test/e2e_test.mjs` `test/match_test.mjs` `test/calc_test.mjs` `test/import_test.mjs` `test/settings-ui_test.mjs` `test/error-log-server_test.mjs`)は、これらが無いと動かない。また `test/error-log-client_test.mjs` は、この機能を入れる前から失敗していた。
+
+- **保存済みレシピの分類と絞り込み**: レシピは「系統(和食・洋食・中華・イタリアン・韓国・エスニック・その他)」「役割(主菜・副菜・汁物・主食・その他)」「主材料(肉・魚介・卵・大豆・野菜・主食・その他)」で分類される。系統・役割はAI作成時に、既存の返答へ項目を2つ足して受け取る(AIの呼び出し回数は増えない。`MAX_ATTEMPTS`・`MAX_AI_CALLS` も変えていない)。主材料は成分表の食品群(食品番号の上2桁)から画面側で自動判定し、編集シートで直せる。編集シートでは3つとも選べる(系統・役割は未分類、主材料は自動に戻せる)。保存済みタブには、検索欄の下に3行のチップ(同じ行は1つ選択・再タップで解除、行どうしはAND)と、栄養7指標の最小・最大の範囲欄(折りたたみ)がある。検索語・チップ・範囲はすべてANDで、栄養値が無いレシピは範囲を指定したときだけ除外される(件数の横に注意文)。以前に保存したレシピは「未分類」(主材料は自動判定)で、移行は不要。DBは変えていない。テストは `npm run test:genre`(外部には接続しない)。
 
 ## 設定手順
 
