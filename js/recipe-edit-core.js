@@ -25,7 +25,7 @@ function createRecipeEditor(deps) {
   const state = {
     mode: "new",
     recipeId: null,
-    draft: { name: "", type: "", ingredients: [], steps: [] },
+    draft: { name: "", type: "", genre: "", role: "", main: "", ingredients: [], steps: [] },
     preview: { status: "idle", data: null, forKey: null, error: "" },
     fieldErrors: {},
     saving: false,
@@ -39,6 +39,14 @@ function createRecipeEditor(deps) {
   let activeKey = null; // 送信中、またはタイマー待ちの計算のキー
   let calcFieldErrors = {}; // 計算の400で付けた欄のエラー(消すときに、保存のエラーと区別するため)
 
+  // 選択肢(config.js の GENRES / ROLES / MAINS)にある文字列だけを返す。それ以外は ""
+  // 選択肢(config.js の GENRES / ROLES / MAINS)にある文字列だけを返す。それ以外は ""
+  const pickOption = (v, kind) => {
+    const list = kind === "genre" ? (typeof GENRES !== "undefined" ? GENRES : null)
+      : kind === "role" ? (typeof ROLES !== "undefined" ? ROLES : null)
+      : (typeof MAINS !== "undefined" ? MAINS : null);
+    return typeof v === "string" && list && list.indexOf(v) >= 0 ? v : "";
+  };
   const blankRow = () => ({ name: "", grams: "", manual: {} });
   const isBlank = (s) => typeof s !== "string" || s.replace(/[\s　]/g, "") === "";
   const emit = () => { if (deps.onChange) deps.onChange(state); };
@@ -192,6 +200,10 @@ function createRecipeEditor(deps) {
       state.draft = {
         name: r.name || "",
         type: r.type || "",
+        // 系統・役割・主材料: 選択肢にある値だけ読み込む(範囲外・欠けは ""=未設定・自動)
+        genre: pickOption(r.genre, "genre"),
+        role: pickOption(r.role, "role"),
+        main: pickOption(r.main, "main"),
         ingredients: (r.ingredientDetails || []).map((d) => {
           const manual = {};
           for (const [id, v] of Object.entries(d.manual || {})) manual[id] = String(v);
@@ -205,7 +217,7 @@ function createRecipeEditor(deps) {
       if (!state.draft.steps.length) state.draft.steps.push("");
     } else {
       state.recipeId = null;
-      state.draft = { name: "", type: "", ingredients: [blankRow()], steps: [""] };
+      state.draft = { name: "", type: "", genre: "", role: "", main: "", ingredients: [blankRow()], steps: [""] };
     }
     initialJson = JSON.stringify(state.draft);
     state.dirty = false;
@@ -248,6 +260,8 @@ function createRecipeEditor(deps) {
       ingredients: built.ingredients,
       steps: state.draft.steps.slice(),
     };
+    // 系統・役割・主材料は、空でないものだけ送る
+    ["genre", "role", "main"].forEach((k) => { if (state.draft[k]) payload[k] = state.draft[k]; });
     const fail = (result) => {
       state.saveError = result.error || "";
       state.saving = false;
@@ -295,6 +309,9 @@ function createRecipeEditor(deps) {
     save,
     setName(s) { state.draft.name = s; touched(); },
     setType(s) { state.draft.type = s; touched(); },
+    setGenre(s) { state.draft.genre = s; touched(); },
+    setRole(s) { state.draft.role = s; touched(); },
+    setMain(s) { state.draft.main = s; touched(); },
     addIngredient() { state.draft.ingredients.push(blankRow()); changed(); },
     updateIngredient(i, patch) {
       const row = state.draft.ingredients[i];

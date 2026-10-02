@@ -186,21 +186,45 @@
     if(!all.length){
       emptyEl.hidden = false;
       setHiddenById('saved-search', true);
+      setHiddenById('saved-filter', true);
       setHiddenById('saved-no-match', true);
       listEl.innerHTML = '';
       return;
     }
     emptyEl.hidden = true;
     setHiddenById('saved-search', false);
+    setHiddenById('saved-filter', false);
     setHiddenById('saved-search-clear', !rawQuery);
 
     const tokens = parseSearchQuery(rawQuery);
-    const matched = all.filter(d => recipeMatchesQuery(d, tokens));
-    if(countEl) countEl.textContent = tokens.length ? matched.length + '件ヒット(保存' + all.length + '件中)' : '';
+    const textMatch = d => recipeMatchesQuery(d, tokens);
+    // 絞り込み(系統・役割・主材料・栄養範囲)は recipe-classify.js / saved-filter.js が読み込まれているときだけ
+    // (読み込み前に呼ばれても従来どおり検索だけで動く)
+    const filtering = typeof applyRecipeFilters === 'function' && typeof savedFilters !== 'undefined' && !!savedFilters;
+    const filterActive = filtering && hasActiveFilters(savedFilters);
+    let matched, missingExcluded = 0;
+    if(filtering){
+      const r = applyRecipeFilters(all, savedFilters, textMatch);
+      matched = r.matched;
+      missingExcluded = r.missingExcluded;
+    } else {
+      matched = all.filter(textMatch);
+    }
+    if(countEl){
+      let text = tokens.length || filterActive ? matched.length + '件ヒット(保存' + all.length + '件中)' : '';
+      if(missingExcluded > 0) text += (text ? '。' : '') + '栄養値のない' + missingExcluded + '件は除外';
+      if(filterActive && rangeConflict(savedFilters)) text += (text ? '。' : '') + '最小が最大より大きい指標があります';
+      countEl.textContent = text;
+    }
     if(noMatchEl){
       noMatchEl.hidden = matched.length > 0;
-      if(!matched.length) noMatchEl.textContent = '「' + rawQuery.trim() + '」に一致するレシピはありません。レシピ名や食材の一部を入力してみてください。';
+      if(!matched.length){
+        noMatchEl.textContent = filterActive
+          ? '条件に一致するレシピはありません。条件を減らすか、「条件をクリア」を押してみてください。'
+          : '「' + rawQuery.trim() + '」に一致するレシピはありません。レシピ名や食材の一部を入力してみてください。';
+      }
     }
+    if(typeof renderSavedFilter === 'function') renderSavedFilter();
 
     // 再描画しても、開いていたカード・栄養の計算内訳は開いたままにする
     const openCards = new Set();
@@ -218,6 +242,7 @@
             <h2>${escapeSavedHtml(d.name)}</h2>
             <span class="dish-type-tag">${escapeSavedHtml(d.type)}</span>
           </div>
+          ${typeof classifyTagsHtml === 'function' && typeof effectiveMain === 'function' ? '<p class="saved-class-tags">' + classifyTagsHtml(d) + '</p>' : ''}
           <p class="saved-macro">${NUTRIENT_METRICS.filter(m => d[m.id] != null).map(m => m.label + ' ' + d[m.id] + m.unit).join(' ・ ')}</p>
           <span class="chev" aria-hidden="true"></span>
         </summary>

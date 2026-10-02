@@ -524,6 +524,9 @@
         ingredients: parsedItem.ingredients,
         steps: parsedItem.steps
       };
+      // AIが付けた系統・役割(あるときだけ。検証はサーバーで済んでいる)
+      if(typeof parsedItem.genre === 'string' && parsedItem.genre) recipe.genre = parsedItem.genre;
+      if(typeof parsedItem.role === 'string' && parsedItem.role) recipe.role = parsedItem.role;
       // サーバーが成分表から計算した値を記録する。
       //   選択していた指標は従来どおり recipe[指標ID] に(保存済みレシピの表示でも使う。サーバーは選択した指標だけを入れて返す)
       //   全指標・照合の内訳は nutrition / ingredientDetails / nutritionCheck に

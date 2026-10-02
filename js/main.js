@@ -59,6 +59,9 @@
     });
   })();
 
+  // 系統・役割・主材料のチップと栄養範囲の絞り込み欄(saved-filter.js)。検索欄の直後に差し込む
+  if(typeof setupSavedFilter === 'function') setupSavedFilter();
+
   // 保存済みバッジの初期表示
   updateSavedCountBadge();
   // 起動中、create-ai.js の読み込みや検索欄の差し込みより先に一覧が描画されていても、

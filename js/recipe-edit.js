@@ -43,6 +43,14 @@ function structureKey(state){
   });
 }
 
+// 系統・役割・主材料の <select>。value が選択肢にあるものだけ選択中にする(それ以外は先頭=未分類・自動)
+function classifySelect(key, id, value, emptyLabel, list){
+  const esc = escapeSavedHtml;
+  const sel = typeof value === 'string' && list.indexOf(value) >= 0 ? value : '';
+  const opt = (v, label) => '<option value="' + esc(v) + '"' + (v === sel ? ' selected' : '') + '>' + esc(label) + '</option>';
+  return '<select id="' + id + '" data-k="' + key + '">' + opt('', emptyLabel) + list.map(v => opt(v, v)).join('') + '</select>';
+}
+
 function renderEditorHtml(state, opts){
   const esc = escapeSavedHtml;
   const typeOptions = (opts && opts.typeOptions) || [];
@@ -51,6 +59,11 @@ function renderEditorHtml(state, opts){
   // 空でも枠は出しておく(入力欄を作り直さずに文言だけ差し替えるため)
   const fieldErr = (key) => '<p class="re-error" data-slot="err:' + esc(key) + '">' + (errs[key] ? esc(errs[key]) : '') + '</p>';
   const blank = reBlank;
+  // 主材料の「自動判定」の参考表示(計算プレビューの食材から)。入力中の欄を作り直さないよう、select の中身は変えない
+  const pvData = state.preview && state.preview.data;
+  const mainAutoText = typeof inferMain === 'function' && pvData && Array.isArray(pvData.ingredientDetails) && pvData.ingredientDetails.length
+    ? '自動判定: ' + esc(inferMain({ ingredientDetails: pvData.ingredientDetails }))
+    : '';
 
   const rowInfo = editorRowInfo(state);
   const ingRows = d.ingredients.map((row, i) => {
@@ -142,6 +155,23 @@ function renderEditorHtml(state, opts){
         <input type="text" id="re-type" data-k="type" value="${esc(d.type)}" maxlength="20" placeholder="例: 丼" list="re-type-list" autocomplete="off">
         <datalist id="re-type-list">${typeOptions.map(t => '<option value="' + esc(t) + '"></option>').join('')}</datalist>
         ${fieldErr('type')}
+        <div class="re-classify">
+          <div class="re-classify-item">
+            <label class="re-label" for="re-genre">系統</label>
+            ${classifySelect('genre', 're-genre', d.genre, '未分類', typeof GENRES !== 'undefined' ? GENRES : [])}
+            ${fieldErr('genre')}
+          </div>
+          <div class="re-classify-item">
+            <label class="re-label" for="re-role">役割</label>
+            ${classifySelect('role', 're-role', d.role, '未分類', typeof ROLES !== 'undefined' ? ROLES : [])}
+            ${fieldErr('role')}
+          </div>
+          <div class="re-classify-item">
+            <label class="re-label" for="re-main">主材料 <span class="re-main-auto" data-slot="mainauto">${mainAutoText}</span></label>
+            ${classifySelect('main', 're-main', d.main, '自動', typeof MAINS !== 'undefined' ? MAINS : [])}
+            ${fieldErr('main')}
+          </div>
+        </div>
       </section>
       <section class="re-section">
         <h3 class="re-h3">食材</h3>
@@ -322,6 +352,9 @@ function setupRecipeEditUi(){
     const i = Number(p[1]);
     if(k === 'name') recipeEditor.setName(el.value);
     else if(k === 'type') recipeEditor.setType(el.value);
+    else if(k === 'genre') recipeEditor.setGenre(el.value);
+    else if(k === 'role') recipeEditor.setRole(el.value);
+    else if(k === 'main') recipeEditor.setMain(el.value);
     else if(p[0] === 'gn') recipeEditor.updateIngredient(i, { name: el.value });
     else if(p[0] === 'gg') recipeEditor.updateIngredient(i, { grams: el.value });
     else if(p[0] === 'gm'){
