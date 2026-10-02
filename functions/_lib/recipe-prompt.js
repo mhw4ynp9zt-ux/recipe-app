@@ -1,3 +1,5 @@
+import { GENRES, ROLES } from "./taxonomy.js";
+
 // レシピ作成のリクエスト検証・プロンプト組み立て・AIの返答の検証(すべてサーバー側)。
 // ブラウザからは「食材・雰囲気・品数・栄養目標」だけを受け取り、プロンプトはここで組み立てます。
 // (自由なプロンプトを受け付けると、AIの中継として悪用されてしまうため)
@@ -205,6 +207,9 @@ function buildPrompt(req) {
   const moodSection = dishSpecs.length
     ? ''
     : '【料理の雰囲気・ジャンル・味の方向性】\n' + (mood ? mood : '指定なし(自由に発想してよい)') + '\n\n';
+  const genreRule = dishSpecs.length
+    ? '・各品の genre は、その品に指定されたジャンルがあれば、それに近い系統を選ぶ(指定がなければ料理に合う系統を選ぶ)\n'
+    : '';
   const dishRule = dishSpecs.length
     ? '・【各品の指定】は、出力するJSON配列の順番に対応させる(配列の1番目が1品目、2番目が2品目…)。ある品に「使う食材」の指定があれば、その品の材料に必ず入れる。料理名の指定があれば、その品はその料理(またはごく近い料理)にする。雰囲気・ジャンルの指定は、その品にだけ反映し、他の品には引き継がない。「指定なし」の項目はAIが自由に決めてよい。指定が他の条件(使わない食材・ガスコンロの数・スープの分量など)とぶつかるときは、他の条件を優先したうえで、指定にできるだけ近い形にする\n'
     : '';
@@ -218,6 +223,7 @@ function buildPrompt(req) {
     '【必ず守る条件】\n' +
     excludedRule +
     dishRule +
+    genreRule +
     '・油はごま油かオリーブオイルのみ使用する(サラダ油などの他の植物油は使わない)\n' +
     '・ハム・ソーセージ・ベーコンなどの加工肉は使わない\n' +
     '・家庭で無理なく作れる、実在感のある料理にする\n' +
@@ -235,6 +241,8 @@ function buildPrompt(req) {
     '  {\n' +
     '    "name": "料理名",\n' +
     '    "type": "鍋・炒め物・丼・サラダ・スープ・プレート・サンド・中華・カレー・パスタ・ご飯もの・煮物・洋食のいずれか、最も近いもの",\n' +
+    '    "genre": "' + GENRES.join('・') + 'のいずれか、最も近いもの",\n' +
+    '    "role": "' + ROLES.join('・') + 'のいずれか、献立での役割",\n' +
     '    "ingredients": [\n' +
     '      { "name": "食材名", "amount": "分量の表記", "grams": 正味のg(数値), "food": "成分表の食品名" }\n' +
     '    ],\n' +
@@ -400,6 +408,9 @@ function parseDishes(content, req) {
       ingredientDetails: details.map(({ name, amount, grams, food }) => ({ name, amount, grams, food })),
       steps: cleanList(item.steps, 15),
     };
+    // 系統・役割は、選択肢にある値のときだけ付ける(範囲外・欠けた値は項目ごと無し。エラーにはしない)
+    if (typeof item.genre === "string" && GENRES.includes(item.genre.trim())) dish.genre = item.genre.trim();
+    if (typeof item.role === "string" && ROLES.includes(item.role.trim())) dish.role = item.role.trim();
     if (!dish.ingredients.length || !dish.steps.length) throw new Error("empty ingredients or steps");
     return dish;
   });

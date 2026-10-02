@@ -1,4 +1,5 @@
 // レシピの自作・編集: 入力の検査と、レシピの組み立て。AIも外部APIも呼ばない(外部通信をしない)。
+import { GENRES, ROLES, MAINS } from "./taxonomy.js";
 import { attachNutrition, METRIC_IDS } from "./nutrition.js";
 import { getSessionUser, checkOrigin, json } from "./session.js";
 
@@ -90,8 +91,20 @@ export function validateDraft(raw) {
     fields.steps = `作り方は1〜${LIMITS.steps}ステップで入力してください`;
   }
 
+  // 系統・役割・主材料(省略可)。未指定・null・空文字・空白だけは「無し」。選択肢にない値・文字列以外はエラー
+  const picks = {};
+  [["genre", GENRES], ["role", ROLES], ["main", MAINS]].forEach(([key, options]) => {
+    const v = d[key];
+    if (v == null) return;
+    if (typeof v !== "string") { fields[key] = "選択肢から選んでください"; return; }
+    const s = v.trim();
+    if (!s) return;
+    if (options.includes(s)) picks[key] = s;
+    else fields[key] = "選択肢から選んでください";
+  });
+
   if (Object.keys(fields).length) return { ok: false, fields };
-  return { ok: true, value: { name, type, ingredients: ing.value, steps } };
+  return { ok: true, value: { name, type, ingredients: ing.value, steps, ...picks } };
 }
 
 // 成分表との照合と栄養計算。入力の行は書き換えない。
@@ -121,6 +134,8 @@ export async function buildRecipe(env, draft, id) {
     nutritionCheck,
   };
   METRIC_IDS.forEach((m) => { recipe[m] = nutrition[m]; });
+  // 系統・役割・主材料は、draft に値があるときだけ入れる
+  ["genre", "role", "main"].forEach((k) => { if (draft[k]) recipe[k] = draft[k]; });
   return recipe;
 }
 
