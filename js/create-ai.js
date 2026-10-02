@@ -1,13 +1,18 @@
 // ==== レシピ作成機能(食材+雰囲気キーワード+選択した栄養指標の目標値・品数からAIがレシピを考える) ====
 // config.js の NUTRIENT_METRICS、utils.js の computeEffort/withPieceCount、
 // save.js の isSaved/toggleSave/recipes配列、auth.js の isLoggedIn/checkSession、
-// error-log.js の logError/logWarn(管理者向けエラーログ)に依存します。
+// error-log.js の logError/logWarn(管理者向けエラーログ)、multi-field.js の createMultiFields(品ごとの入力欄)に依存します。
 // 栄養量はAIの目分量ではなく、サーバーが日本食品標準成分表(D1)から計算した値を表示します(内訳は各品の「栄養の計算内訳」)。
 // AIの呼び出しはサーバーが行います。ブラウザには食材・雰囲気・品数・栄養目標だけを送り、
 // APIキー・モデル・プロンプトはサーバー側(管理者が設定)で扱うため、この画面には一切現れません。
 // AIが使えるのはログイン中のユーザーだけで、アプリ全体の1日の利用回数に上限があります。
 // 「使わない食材」は設定タブ(excluded-foods.js)で登録します。ブラウザからは送らず、サーバーが本人の登録を読んで自動で除外します。
 // 除外したはずの食材が結果に残ってしまった場合は、サーバーが excludedHits で知らせ、結果の上に注意を表示します。
+//
+// 食材・料理名/雰囲気/ジャンルは、品ごとに指定できます(2品・3品のとき)。
+// 画面の入力欄は multi-field.js が作り、ここでは createMultiFields.getDishInputs(品数) で品ごとの入力を受け取って、
+// 要求の dishes([{ ingredients, mood }, …]。品数と同じ数)として送ります。従来の ingredients / mood には1品目の内容も入れます(古いサーバー・古い画面との互換)。
+// 品ごとの入力欄が無い古い画面(createMultiFields が無い・使えない)では、従来の「全品共通の ingredients / mood」だけを送ります。
 //
 // 作成は「ジョブ」としてサーバーで進みます(functions/_lib/recipe-job.js)。
 //   1. POST /api/ai/create-recipe   … ジョブを作るだけ(AIは呼ばれない)。jobId を受け取り、この端末に控える
@@ -182,6 +187,32 @@
     return active ? parseInt(active.dataset.count, 10) : 1;
   }
 
+  // ==== 品ごとの入力欄(multi-field.js)との連携 ====
+  // 品ごとの入力欄が使えるときは、その入力([{ ingredients, mood }, …]。品数と同じ数)を返す。使えなければ null(従来の入力を使う)
+  function readDishInputs(count){
+    try {
+      if(typeof createMultiFields !== 'undefined' && createMultiFields && createMultiFields.ready === true
+          && typeof createMultiFields.getDishInputs === 'function'){
+        const list = createMultiFields.getDishInputs(count);
+        if(Array.isArray(list) && list.length === count) return list;
+      }
+    } catch(e){ /* 読めなければ従来の入力を使う */ }
+    return null;
+  }
+  // 従来の全品共通の入力欄(#create-ingredients / #create-mood)の値。無い画面では空文字
+  function readLegacyValue(id){
+    const el = document.getElementById(id);
+    return el && typeof el.value === 'string' ? el.value.trim() : '';
+  }
+  // 品数に合わせて、品ごとのカードを出し分ける
+  function syncDishCards(){
+    try {
+      if(typeof createMultiFields !== 'undefined' && createMultiFields && typeof createMultiFields.setCount === 'function'){
+        createMultiFields.setCount(getCreateCount());
+      }
+    } catch(e){ /* カードの出し分けに失敗しても、作成そのものは止めない */ }
+  }
+
   // ==== 栄養指標のトグル選択(どの指標を今回の目安にするか、端末に保存して次回も復元) ====
   const TARGET_METRICS_KEY = 'recipeRouletteTargetMetricsV1';
 
@@ -286,8 +317,10 @@
       document.querySelectorAll('.create-count-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       updateCreateHint();
+      syncDishCards();
     });
   });
+  syncDishCards();
 
   // 栄養値は小数1桁まで(足し算の誤差で 12.299999 のような表示にならないように)
   function roundNutrient(v){
@@ -638,8 +671,6 @@
 
   async function generateRecipe(){
     if(watchingJobId || creatingJob) return; // すでに作成中(二重に押してもAIを重ねて呼ばない)
-    const ingredientsRaw = document.getElementById('create-ingredients').value.trim();
-    const moodRaw = document.getElementById('create-mood').value.trim();
     if(!isLoggedIn()){
       showCreateError('AIでレシピを作成するには、「設定」タブからパスキーでログインしてください。');
       return;
@@ -660,13 +691,23 @@
       const activeMetrics = getActiveMetrics();
       const targets = {};
       activeMetrics.forEach(m => { targets[m.id] = target[m.id]; });
+      // 食材・料理名/雰囲気/ジャンルは、品ごとの入力欄があればその内容(品ごとの dishes)を送る。
+      // 従来の ingredients / mood には、1品目の内容(品ごとの入力欄が無い古い画面では、全品共通の入力欄の内容)を入れる。
+      const dishInputs = readDishInputs(target.count);
+      const ingredientsRaw = dishInputs ? dishInputs[0].ingredients : readLegacyValue('create-ingredients');
+      const moodRaw = dishInputs ? dishInputs[0].mood : readLegacyValue('create-mood');
       logContext.request = { ingredients: ingredientsRaw, mood: moodRaw, count: target.count, targets: targets };
-      const requestBody = JSON.stringify({
+      const body = {
         ingredients: ingredientsRaw,
         mood: moodRaw,
         count: target.count,
         targets: targets
-      });
+      };
+      if(dishInputs){
+        body.dishes = dishInputs;
+        logContext.request.dishes = dishInputs;
+      }
+      const requestBody = JSON.stringify(body);
       // ジョブを作るだけの短い要求(AIは呼ばれない)。応答が返る前に通信が切れた場合(iOS Safariでは TypeError "Load failed")だけ、
       // 1回だけ自動で再試行する。再試行しても、サーバーは実行中のジョブを重ねて作らない。
       let response;
@@ -689,20 +730,20 @@
         }
       }
       logContext.status = response.status;
-      const body = await readJson(response);
-      if(body.notJson) logContext.responseText = body.text; // JSONではない応答(エラーページのHTMLなど)は原因調査のため本文も残す
-      logContext.serverError = body.data.error;
-      logContext.debug = body.data.debug;
+      const resBody = await readJson(response);
+      if(resBody.notJson) logContext.responseText = resBody.text; // JSONではない応答(エラーページのHTMLなど)は原因調査のため本文も残す
+      logContext.serverError = resBody.data.error;
+      logContext.debug = resBody.data.debug;
       if(!response.ok){
         // ログインの期限切れなら状態を更新し、サーバーが返した日本語メッセージ(上限到達など)をそのまま表示する
         if(response.status === 401) checkSession();
         const apiErr = new Error('API request failed: ' + response.status);
-        apiErr.userMessage = body.data.error;
+        apiErr.userMessage = resBody.data.error;
         throw apiErr;
       }
-      if(typeof body.data.jobId !== 'string') throw new Error('Unexpected response shape');
-      started = { id: body.data.jobId, request: logContext.request, startedAt: Date.now(), resumed: !!body.data.resumed };
-      if(body.data.resumed){
+      if(typeof resBody.data.jobId !== 'string') throw new Error('Unexpected response shape');
+      started = { id: resBody.data.jobId, request: logContext.request, startedAt: Date.now(), resumed: !!resBody.data.resumed };
+      if(resBody.data.resumed){
         // すでに作成中のものがあった(二重タップ・開き直しなど)。新しく作らず、その続きを表示する
         setLoadingSub('作成中のレシピがあるため、その続きを表示します');
       }
