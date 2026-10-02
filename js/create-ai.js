@@ -234,6 +234,12 @@
 
   let enabledMetrics = loadEnabledMetrics();
 
+  // ==== 所要時間(全品を同時進行で作り終える上限。端末に記憶する。無い古い画面では何もしない) ====
+  // time-limit.js(readTimeLimit / writeTimeLimit / overLimitIndexes / validMinutes)と config.js の TIME_LIMIT_OPTIONS に依存。
+  // 注意: updateCreateHint() より前(最初の呼び出しの前)に宣言しておくこと
+  const timeLimitAvailable = typeof TIME_LIMIT_OPTIONS !== 'undefined' && typeof readTimeLimit === 'function';
+  let timeLimit = timeLimitAvailable ? readTimeLimit(localStorage) : null;
+
   function getActiveMetrics(){
     return NUTRIENT_METRICS.filter(m => enabledMetrics[m.id]);
   }
@@ -257,12 +263,13 @@
   function updateCreateHint(){
     const t = getCreateTarget();
     const active = getActiveMetrics();
+    const timeText = timeLimit ? ' 所要時間は' + timeLimit + '分以内を目安にします。' : '';
     if(!active.length){
-      createHintEl.textContent = '全' + t.count + '品の合計で、栄養バランスの良いレシピを考えます。';
+      createHintEl.textContent = '全' + t.count + '品の合計で、栄養バランスの良いレシピを考えます。' + timeText;
       return;
     }
     const parts = active.map(m => m.label + t[m.id] + m.unit);
-    createHintEl.textContent = '全' + t.count + '品の合計で、' + parts.join('・') + 'を目安にレシピを考えます。';
+    createHintEl.textContent = '全' + t.count + '品の合計で、' + parts.join('・') + 'を目安にレシピを考えます。' + timeText;
   }
 
   // 入力欄の値を指標ごとに覚えておき、指標のON/OFFで描画し直しても入力した値が消えないようにする
@@ -311,6 +318,39 @@
 
   renderMetricToggles();
   renderTargetInputs();
+
+  // 所要時間のチップ(指定なし・10/30/45/60分以内)。選択はこの端末に記憶する
+  const timeLimitRowEl = document.getElementById('time-limit-row');
+  function renderTimeLimitToggles(){
+    if(!timeLimitAvailable || !timeLimitRowEl) return;
+    const chip = (minutes, label) => {
+      const on = (timeLimit === minutes);
+      return `<button type="button" class="toggle-btn time-limit-btn${on ? ' active' : ''}" data-minutes="${minutes === null ? '' : minutes}" aria-pressed="${on ? 'true' : 'false'}">${label}</button>`;
+    };
+    timeLimitRowEl.innerHTML = chip(null, '指定なし') + TIME_LIMIT_OPTIONS.map(n => chip(n, n + '分以内')).join('');
+  }
+  if(timeLimitAvailable && timeLimitRowEl){
+    try {
+      if(!document.getElementById('time-limit-style') && document.head && document.createElement){
+        const style = document.createElement('style');
+        style.id = 'time-limit-style';
+        style.textContent = '#time-limit-row{grid-template-columns:repeat(5,1fr);} #time-limit-row .toggle-btn{font-size:13.5px; padding:0 2px;}';
+        document.head.appendChild(style);
+      }
+    } catch(e){ /* 見た目の調整だけ。作成そのものは止めない */ }
+    timeLimitRowEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.time-limit-btn');
+      if(!btn) return;
+      const n = btn.dataset.minutes === '' ? null : Number(btn.dataset.minutes);
+      if(n !== null && !TIME_LIMIT_OPTIONS.includes(n)) return;
+      timeLimit = n;
+      writeTimeLimit(localStorage, n);
+      renderTimeLimitToggles();
+      updateCreateHint();
+    });
+    renderTimeLimitToggles();
+    updateCreateHint();
+  }
 
   document.querySelectorAll('.create-count-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -389,7 +429,18 @@
       </details>`;
   }
 
-  function renderCreatedCombo(dishes, nutritionOk, targetCheck, excludedHits){
+  // 所要時間の注意: AIの目安時間が、指定した上限を超えている品があるとき(作り直しはせず、知らせるだけ)
+  function renderTimeWarn(dishes, maxMinutes){
+    if(!timeLimitAvailable || !TIME_LIMIT_OPTIONS.includes(maxMinutes)) return '';
+    if(!overLimitIndexes(dishes, maxMinutes).length) return '';
+    return '<p class="nutrition-warn">目安が指定(' + maxMinutes + '分)を超えている品があります。もう一度作成するか、条件を変えてください。</p>';
+  }
+  // 各品の所要時間の目安(AIが付けた値が有効なときだけ)
+  function renderDishTime(d){
+    return timeLimitAvailable && validMinutes(d.minutes) ? '<p class="dish-macro dish-time">目安 約' + d.minutes + '分</p>' : '';
+  }
+
+  function renderCreatedCombo(dishes, nutritionOk, targetCheck, excludedHits, maxMinutes){
     // このバッチで実際に値が入っている指標だけをバッジ・表示対象にする(選択しなかった指標は表示しない)
     const shown = NUTRIENT_METRICS.filter(m => dishes.some(d => d[m.id] != null));
     const offIds = new Set(((targetCheck && targetCheck.results) || []).filter(r => !r.ok).map(r => r.id));
@@ -405,6 +456,7 @@
         </div>` : ''}
         ${renderExcludedWarn(excludedHits)}
         ${nutritionOk ? renderTargetCheck(targetCheck) : ''}
+        ${renderTimeWarn(dishes, maxMinutes)}
         ${dishes.map((d, i) => `
           <div class="dish-block">
             <div class="dish-head">
@@ -412,6 +464,7 @@
               <span class="dish-type-tag">${escapeHtml(d.type)}</span>
             </div>
             <p class="dish-macro">${shown.filter(m => d[m.id] != null).map(m => m.label + ' ' + d[m.id] + m.unit).join(' ・ ')}</p>
+            ${renderDishTime(d)}
             ${renderNutritionWarn(d)}
             <button class="save-btn${isSaved(d.id) ? ' saved' : ''}" data-id="${d.id}">${isSaved(d.id) ? '★ 保存済み' : '☆ 保存する'}</button>
             <div class="ingredients">
@@ -527,6 +580,8 @@
       // AIが付けた系統・役割(あるときだけ。検証はサーバーで済んでいる)
       if(typeof parsedItem.genre === 'string' && parsedItem.genre) recipe.genre = parsedItem.genre;
       if(typeof parsedItem.role === 'string' && parsedItem.role) recipe.role = parsedItem.role;
+      // AIが付けた所要時間の目安(分。有効な値のときだけ。保存済みレシピにも残る)
+      if(timeLimitAvailable && validMinutes(parsedItem.minutes)) recipe.minutes = parsedItem.minutes;
       // サーバーが成分表から計算した値を記録する。
       //   選択していた指標は従来どおり recipe[指標ID] に(保存済みレシピの表示でも使う。サーバーは選択した指標だけを入れて返す)
       //   全指標・照合の内訳は nutrition / ingredientDetails / nutritionCheck に
@@ -543,7 +598,7 @@
       recipes.push(recipe);
       return recipe;
     });
-    renderCreatedCombo(dishes, nutritionOk, data.targetCheck, data.excludedHits);
+    renderCreatedCombo(dishes, nutritionOk, data.targetCheck, data.excludedHits, logContext.request && logContext.request.maxMinutes);
   }
 
   // 終了処理(成功・失敗どちらでも)。ジョブの控えを消し、待機表示を閉じる
@@ -709,6 +764,11 @@
       if(dishInputs){
         body.dishes = dishInputs;
         logContext.request.dishes = dishInputs;
+      }
+      // 所要時間の指定(あるときだけ)。ジョブの控え(logContext.request)にも入れ、開き直した後の超過判定でも使う
+      if(timeLimit !== null){
+        body.maxMinutes = timeLimit;
+        logContext.request.maxMinutes = timeLimit;
       }
       const requestBody = JSON.stringify(body);
       // ジョブを作るだけの短い要求(AIは呼ばれない)。応答が返る前に通信が切れた場合(iOS Safariでは TypeError "Load failed")だけ、

@@ -24,3 +24,6 @@ const NUTRIENT_METRICS = [
 const GENRES = ['和食', '洋食', '中華', 'イタリアン', '韓国', 'エスニック'];
 const ROLES = ['主菜', '副菜', '汁物', '主食'];
 const MAINS = ['肉', '魚介', '卵', '大豆', '野菜', '穀類', 'その他'];
+
+// レシピ作成の所要時間の選択肢(分。全品を同時進行で作り終える上限)。functions/_lib/recipe-prompt.js の MAX_MINUTES_OPTIONS と同じ内容に保つ(test/time-limit_test.mjs が一致を確認する)。
+const TIME_LIMIT_OPTIONS = [10, 30, 45, 60];
