@@ -39,7 +39,7 @@ function inferMain(recipe) {
   const veg = sum(VEG_GROUPS);
   const staple = sum(STAPLE_GROUPS);
   if (veg <= 0 && staple <= 0) return 'その他';
-  return staple > veg ? '主食' : '野菜';
+  return staple > veg ? '穀類' : '野菜';
 }
 
 function effectiveMain(recipe) {

@@ -21,6 +21,6 @@ const NUTRIENT_METRICS = [
 // ※サーバー側 functions/_lib/recipe-prompt.js の METRICS は、上の NUTRIENT_METRICS(id・label・unit)と同じ内容に保ってください。
 
 // レシピの分類の選択肢。functions/_lib/taxonomy.js と同じ内容に保つ(test/genre-taxonomy_test.mjs が一致を確認する)。
-const GENRES = ['和食', '洋食', '中華', 'イタリアン', '韓国', 'エスニック', 'その他'];
-const ROLES = ['主菜', '副菜', '汁物', '主食', 'その他'];
-const MAINS = ['肉', '魚介', '卵', '大豆', '野菜', '主食', 'その他'];
+const GENRES = ['和食', '洋食', '中華', 'イタリアン', '韓国', 'エスニック'];
+const ROLES = ['主菜', '副菜', '汁物', '主食'];
+const MAINS = ['肉', '魚介', '卵', '大豆', '野菜', '穀類', 'その他'];
