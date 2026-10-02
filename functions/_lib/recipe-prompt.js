@@ -3,6 +3,12 @@
 // (自由なプロンプトを受け付けると、AIの中継として悪用されてしまうため)
 // 栄養量はAIに答えさせず、AIが返した食材と重さをもとに nutrition.js が日本食品標準成分表(D1)から計算します。
 //
+// 品ごとの指定(2品・3品のとき)
+//   ブラウザは dishes: [{ ingredients, mood }, …](品数と同じ数)を送れます。1品目から順に、その品の使いたい食材・料理名/雰囲気/ジャンルです。
+//   ・2品以上で、どれかの品に指定があれば req.dishes に入れ、プロンプトは「各品の指定」の形になります(指定の無い品・項目はAIにおまかせ)。
+//   ・1品のときは、従来どおり req.ingredients / req.mood にその内容を入れます(プロンプトは従来と同じ)。
+//   ・dishes が無い従来のリクエスト(古い画面)は、これまでどおり全品共通の ingredients / mood として扱います。
+//
 // ユーザーごとの「使わない食材」(設定タブで登録)は、ブラウザからは受け取りません。
 // ジョブの開始時にサーバーがDBから読み、req.excluded(名前の配列)としてここへ渡します(recipe-job.js の startJob)。
 //
@@ -29,30 +35,69 @@ const AIM_TOLERANCE = 0.03;
 const TOLERANCE_EPS = 1e-6; // 10.0000001% のような浮動小数の誤差で不合格にしないための余裕
 
 const ALLOWED_COUNTS = [1, 2, 3];
-const MAX_INGREDIENTS_LEN = 500;
-const MAX_MOOD_LEN = 300;
+const MAX_INGREDIENTS_LEN = 500; // 1品あたり(従来の全品共通の入力も同じ)
+const MAX_MOOD_LEN = 300;        // 1品あたり(従来の全品共通の入力も同じ)
 
 function cleanText(value) {
   // 改行などの制御文字は空白にしてプロンプトを崩されないようにする
   return String(value).replace(/[\u0000-\u001f\u007f]/g, " ").trim();
 }
 
-// 成功: { value: { ingredients, mood, count, metrics: [{id,label,unit,target}] } } / 失敗: { error }
+// 品ごとの指定(body.dishes)を検証して整える。成功: { list: [{ ingredients, mood }] }(品数と同じ数) / 失敗: { error }
+// 各品は { ingredients, mood } の文字列(省略・空なら指定なし)。数が品数と合わない、形が違う、長すぎる場合は失敗。
+function parseDishSpecs(raw, count) {
+  if (!Array.isArray(raw) || raw.length !== count) return { error: "品ごとの指定の数が品数と合いません" };
+  const list = [];
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i];
+    if (item === null || item === undefined) { list.push({ ingredients: "", mood: "" }); continue; }
+    if (typeof item !== "object" || Array.isArray(item)) return { error: "品ごとの指定の形式が不正です" };
+    const out = {};
+    for (const [key, max, label] of [["ingredients", MAX_INGREDIENTS_LEN, "食材"], ["mood", MAX_MOOD_LEN, "料理名・雰囲気・ジャンル"]]) {
+      const v = item[key];
+      if (v !== undefined && v !== null && typeof v !== "string") return { error: "品ごとの指定の形式が不正です" };
+      out[key] = typeof v === "string" ? cleanText(v) : "";
+      if (out[key].length > max) return { error: `${i + 1}品目の${label}の入力が長すぎます(${max}文字まで)` };
+    }
+    list.push(out);
+  }
+  return { list };
+}
+
+// 成功: { value: { ingredients, mood, dishes?, count, metrics: [{id,label,unit,target}] } } / 失敗: { error }
+// dishes は「2品以上で、どれかの品に指定がある」ときだけ付く(各要素は { ingredients, mood })。
 function parseCreateRequest(body) {
   if (!body || typeof body !== "object") return { error: "リクエストが不正です" };
 
-  const ingredients = typeof body.ingredients === "string" ? cleanText(body.ingredients) : "";
+  let ingredients = typeof body.ingredients === "string" ? cleanText(body.ingredients) : "";
   if (ingredients.length > MAX_INGREDIENTS_LEN) {
     return { error: `食材の入力が長すぎます(${MAX_INGREDIENTS_LEN}文字まで)` };
   }
 
-  const mood = typeof body.mood === "string" ? cleanText(body.mood) : "";
+  let mood = typeof body.mood === "string" ? cleanText(body.mood) : "";
   if (mood.length > MAX_MOOD_LEN) {
     return { error: `雰囲気・ジャンルの入力が長すぎます(${MAX_MOOD_LEN}文字まで)` };
   }
 
   const count = Number(body.count);
   if (!ALLOWED_COUNTS.includes(count)) return { error: "品数が不正です" };
+
+  // 品ごとの指定がある場合は、全品共通の ingredients / mood よりこちらを優先する
+  let dishes;
+  if (body.dishes !== undefined && body.dishes !== null) {
+    const r = parseDishSpecs(body.dishes, count);
+    if (r.error) return { error: r.error };
+    if (count === 1) {
+      // 1品だけなら従来の形(プロンプトも従来と同じ)
+      ingredients = r.list[0].ingredients;
+      mood = r.list[0].mood;
+    } else {
+      // 2品以上: どれかに指定があれば品ごとの形にする。ingredients / mood は記録用に全品分をつないだ文字列
+      ingredients = r.list.map((d) => d.ingredients).filter(Boolean).join(" ");
+      mood = r.list.map((d) => d.mood).filter(Boolean).join("、");
+      if (r.list.some((d) => d.ingredients || d.mood)) dishes = r.list;
+    }
+  }
 
   const targets = body.targets && typeof body.targets === "object" ? body.targets : {};
   const metrics = [];
@@ -65,7 +110,9 @@ function parseCreateRequest(body) {
     metrics.push({ id, label: METRICS[id].label, unit: METRICS[id].unit, target: v });
   }
 
-  return { value: { ingredients, mood, count, metrics } };
+  const value = { ingredients, mood, count, metrics };
+  if (dishes) value.dishes = dishes;
+  return { value };
 }
 
 function fmtNum(n) {
@@ -109,9 +156,15 @@ function excludedOf(req) {
   return Array.isArray(req.excluded) ? req.excluded.filter((x) => typeof x === "string" && x) : [];
 }
 
+// 品ごとの指定(req.dishes)。無ければ空配列(=全品共通の ingredients / mood を使う従来の形)
+function dishSpecsOf(req) {
+  return Array.isArray(req.dishes) && req.dishes.length ? req.dishes : [];
+}
+
 function buildPrompt(req) {
   const { ingredients, mood, count, metrics } = req;
   const excluded = excludedOf(req);
+  const dishSpecs = dishSpecsOf(req);
 
   // AIには合格ライン(TOLERANCE)ではなく、より厳しい狙い(AIM_TOLERANCE)を伝える
   const aimPct = Math.round(AIM_TOLERANCE * 100);
@@ -140,14 +193,31 @@ function buildPrompt(req) {
     ? '・上の【使わない食材】は、主材料・副材料・調味料・だし・飾りのどれにも一切使わない。「豚肉」のような大きな分類が書かれていたら、ロース・バラ・ひき肉など、その分類に含まれるすべての部位・種類も使わない。使いたい食材や雰囲気の指定と重なる場合も、使わない食材を優先する\n'
     : '';
 
+  // 食材・雰囲気の指定。品ごとの指定があるときは「各品の指定」に、無いときは従来の全品共通の2項目にする
+  const specSection = dishSpecs.length
+    ? '【各品の指定(1品ごとに、指定された食材・料理名・雰囲気・ジャンルを守る)】\n' +
+      dishSpecs.map((d, i) =>
+        (i + 1) + '品目\n' +
+        '・使う食材: ' + (d.ingredients ? d.ingredients : '指定なし(栄養の目標に合う食材をAIが自由に選んでよい)') + '\n' +
+        '・料理名・雰囲気・ジャンル: ' + (d.mood ? d.mood : '指定なし(自由に発想してよい)')
+      ).join('\n') + '\n\n'
+    : '【使う食材】\n' + (ingredients ? ingredients : '指定なし(栄養の目標に合う食材をAIが自由に選んでよい)') + '\n\n';
+  const moodSection = dishSpecs.length
+    ? ''
+    : '【料理の雰囲気・ジャンル・味の方向性】\n' + (mood ? mood : '指定なし(自由に発想してよい)') + '\n\n';
+  const dishRule = dishSpecs.length
+    ? '・【各品の指定】は、出力するJSON配列の順番に対応させる(配列の1番目が1品目、2番目が2品目…)。ある品に「使う食材」の指定があれば、その品の材料に必ず入れる。料理名の指定があれば、その品はその料理(またはごく近い料理)にする。雰囲気・ジャンルの指定は、その品にだけ反映し、他の品には引き継がない。「指定なし」の項目はAIが自由に決めてよい。指定が他の条件(使わない食材・ガスコンロの数・スープの分量など)とぶつかるときは、他の条件を優先したうえで、指定にできるだけ近い形にする\n'
+    : '';
+
   return 'あなたは家庭料理のレシピ考案アシスタントです。以下の条件をもとに、' + count + '品分のレシピを考えて、JSON配列の形式のみで出力してください。前置き・説明・Markdownのコードブロック記号(```)は一切つけないでください。\n\n' +
-    '【使う食材】\n' + (ingredients ? ingredients : '指定なし(栄養の目標に合う食材をAIが自由に選んでよい)') + '\n\n' +
+    specSection +
     excludedSection +
-    '【料理の雰囲気・ジャンル・味の方向性】\n' + (mood ? mood : '指定なし(自由に発想してよい)') + '\n\n' +
+    moodSection +
     '【栄養の目標】\n' + targetText + '\n\n' +
     '【品数】\n' + countText + '\n\n' +
     '【必ず守る条件】\n' +
     excludedRule +
+    dishRule +
     '・油はごま油かオリーブオイルのみ使用する(サラダ油などの他の植物油は使わない)\n' +
     '・ハム・ソーセージ・ベーコンなどの加工肉は使わない\n' +
     '・家庭で無理なく作れる、実在感のある料理にする\n' +
@@ -192,6 +262,10 @@ function buildRetryPrompt(req, dishes, check, hits = []) {
   const excludedKeep = excluded.length
     ? '・【使わない食材】(' + excluded.join('、') + ')は、作り直しでも絶対に使わないでください。分量を調整するときや食材を入れ替えるときも、これらを加えないこと。\n'
     : '';
+  // 品ごとの指定があるときは、作り直しでも守らせる(指定した品の入れ替わり・食材の脱落を防ぐ)
+  const dishKeep = dishSpecsOf(req).length
+    ? '・【各品の指定】(使う食材・料理名・雰囲気・ジャンル)は最初の依頼のとおりです。品の順番も変えず、指定を守ったまま作り直してください。\n'
+    : '';
 
   // 目標は許容範囲に収まっていて、使わない食材だけを直したいとき
   if (!off.length) {
@@ -202,6 +276,7 @@ function buildRetryPrompt(req, dishes, check, hits = []) {
       '・料理の方向性はできるだけ保ってください。\n' +
       '・amount の表記も、grams に合わせて直してください。\n' +
       excludedKeep +
+      dishKeep +
       '・「必ず守る条件」と出力形式は最初の依頼のとおりです。JSON配列のみを出力し、前置き・コードブロック記号はつけないでください。';
   }
 
@@ -247,6 +322,7 @@ function buildRetryPrompt(req, dishes, check, hits = []) {
     '・料理の方向性はできるだけ保ち、重さの調整で足りないときに限って、食材の追加・入れ替えをしてください。\n' +
     '・amount の表記も、grams に合わせて直してください。\n' +
     excludedKeep +
+    dishKeep +
     '・「必ず守る条件」と出力形式は最初の依頼のとおりです。JSON配列のみを出力し、前置き・コードブロック記号はつけないでください。';
 }
 
