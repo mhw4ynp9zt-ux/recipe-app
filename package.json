@@ -1,0 +1,20 @@
+{
+  "name": "recipe-app-auth",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler pages dev . --d1=DB",
+    "deploy": "wrangler pages deploy .",
+    "test:job": "node test/job_test.mjs && node test/create-ui_job_test.mjs",
+    "test:time": "node test/time-prompt_test.mjs && node test/time-limit_test.mjs && node test/time-create-ui_test.mjs",
+    "test:excluded": "node test/excluded-foods_test.mjs",
+    "test:dishes": "node test/dishes_test.mjs && node test/multi-field_test.mjs && node test/create-dishes_test.mjs",
+    "test:genre": "node test/genre-taxonomy_test.mjs && node test/genre-classify_test.mjs && node test/genre-filter_test.mjs && node test/genre-prompt_test.mjs && node test/genre-create-ui_test.mjs && node test/genre-edit-api_test.mjs && node test/genre-edit-core_test.mjs && node test/genre-edit-ui_test.mjs && node test/genre-saved-ui_test.mjs",
+    "test:edit": "node test/recipe-edit-nutrition_test.mjs && node test/recipe-edit-lib_test.mjs && node test/recipe-edit-api_test.mjs && node test/recipe-edit-core_test.mjs && node test/recipe-edit-ui_test.mjs && node test/recipe-edit-env_test.mjs && node test/recipe-edit-contract_test.mjs"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^13.3.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}
