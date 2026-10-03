@@ -53,38 +53,50 @@
     return 'high';
   }
 
-  // ==== 「作る」タブの手間度の指定(1=ラク / 2=ふつう / 3=しっかり。通信はしない) ====
+  // ==== 「作る」タブの手間度の指定(0=超ラク / 1=ラク / 2=ふつう / 3=しっかり。品ごとに選ぶ。通信はしない) ====
   // 上の computeEffort(材料数+手順数の low/mid/high。レシピの effort 項目)とは別のもので、
-  // こちらは作成時に選ぶ指定と、AIが判定して返す effortLevel(1〜3。レシピの effortLevel 項目)に使う。
+  // こちらは作成時に選ぶ指定と、AIが判定して返す effortLevel(0〜3。レシピの effortLevel 項目)に使う。
+  // 注意: 0(超ラク)は「指定なし(null)」とは別の値。0 を偽(falsy)として扱わないこと。
   // config.js の EFFORT_OPTIONS と、サーバー側 functions/_lib/recipe-prompt.js の EFFORT_LEVELS は同じ内容に保つ。
   const EFFORT_KEY = 'recipeRouletteEffortV1';
-  // 手順数の上限(ラク=3、ふつう=6)。AIの自己申告に頼らず、コード側で数えて判定するために使う。しっかり(3)は上限なし
+  // 手順数の上限(ラク=3、ふつう=6)。AIの自己申告に頼らず、コード側で数えて判定するために使う。
+  // 超ラク(0)は手順数の上限なし(包丁を使うかどうかはAIの判定=effortLevel だけで見る)、しっかり(3)は上限なし
   const EFFORT_STEP_LIMIT = { 1: 3, 2: 6 };
 
-  // 手間度として使える値か(1・2・3の数値型のみ)
+  // 手間度として使える値か(0・1・2・3の数値型のみ)
   function validEffortLevel(v){
-    return v === 1 || v === 2 || v === 3;
+    return v === 0 || v === 1 || v === 2 || v === 3;
   }
 
   // 指定した手間度(selected)より手間がかかっている品の番号(0始まり)。
+  //   ・selected は、品ごとの指定の配列(i番目が i品目の指定。null=指定なし)か、全品共通の数値
   //   ・AIが返した effortLevel が指定より大きい、または手順の数が上限を超えている品が対象
-  //   ・指定なし・「しっかり」(3)・不正な指定のときは、常に対象なし(しっかりは「手間をかけてよい」という指定で、上限ではない)
+  //   ・指定なし・「しっかり」(3)・不正な指定の品は、常に対象外(しっかりは「手間をかけてよい」という指定で、上限ではない)
   function effortOverIndexes(dishes, selected){
     const out = [];
-    if(!Array.isArray(dishes) || (selected !== 1 && selected !== 2)) return out;
+    if(!Array.isArray(dishes)) return out;
     dishes.forEach((d, i) => {
       if(!d) return;
-      const levelOver = validEffortLevel(d.effortLevel) && d.effortLevel > selected;
-      const stepsOver = Array.isArray(d.steps) && d.steps.length > EFFORT_STEP_LIMIT[selected];
+      const sel = Array.isArray(selected) ? selected[i] : selected;
+      if(sel !== 0 && sel !== 1 && sel !== 2) return;
+      const levelOver = validEffortLevel(d.effortLevel) && d.effortLevel > sel;
+      const limit = EFFORT_STEP_LIMIT[sel];
+      const stepsOver = limit !== undefined && Array.isArray(d.steps) && d.steps.length > limit;
       if(levelOver || stepsOver) out.push(i);
     });
     return out;
   }
 
-  // 覚えておいた手間度。"1"〜"3" の文字列だけ復元し、それ以外・読めないときは null(指定なし)
-  function readEffortLevel(storage){
+  // 品ごとの記憶先のキー。1品目は従来のキーのまま、2品目以降は -2 / -3 を付ける
+  function effortKeyFor(idx){
+    return idx > 0 ? EFFORT_KEY + '-' + (idx + 1) : EFFORT_KEY;
+  }
+
+  // 覚えておいた手間度(idx: 0始まりの品の番号)。"0"〜"3" の文字列だけ復元し、それ以外・読めないときは null(指定なし)
+  function readEffortLevel(storage, idx){
     try {
-      const raw = storage.getItem(EFFORT_KEY);
+      const raw = storage.getItem(effortKeyFor(idx || 0));
+      if(raw === null || raw === undefined || raw === '') return null;
       const n = Number(raw);
       return validEffortLevel(n) && raw === String(n) ? n : null;
     } catch(e){
@@ -93,9 +105,11 @@
   }
 
   // 手間度を覚える。level が null(指定なし)なら覚えた値を消す。保存できなくても何もしない
-  function writeEffortLevel(storage, level){
+  function writeEffortLevel(storage, level, idx){
     try {
-      if(level === null || level === undefined) storage.removeItem(EFFORT_KEY);
-      else storage.setItem(EFFORT_KEY, String(level));
+      const key = effortKeyFor(idx || 0);
+      if(level === null || level === undefined) storage.removeItem(key);
+      else storage.setItem(key, String(level));
     } catch(e){ /* 保存できない環境では、次回の復元だけできない */ }
   }
+
