@@ -1,5 +1,5 @@
-// ==== 「設定」タブ:使わない食材の登録(ログイン中の全員)/ 外部AI(Grok)の管理(管理者専用) ====
-// 「使わない食材」はログインしているとき、外部AIの管理欄は管理者としてログインしているときだけ表示されます
+// ==== 「設定」タブ:使わない食材・個人的な要望の登録(ログイン中の全員)/ 外部AI(Grok)の管理(管理者専用) ====
+// 「使わない食材」「個人的な要望」はログインしているとき、外部AIの管理欄は管理者としてログインしているときだけ表示されます
 // (どちらも auth.js の renderAuthUI から onAuthChanged() が呼ばれます)。
 // APIキー・モデル・1日の上限はサーバー(/api/admin/ai-settings など)に保存され、この端末には保存しません。
 // 表示・非表示はあくまで見た目の制御で、実際の権限チェックはすべてサーバー側で行われます。
@@ -309,7 +309,7 @@
 
   // 入力欄の文字を、食材ごとに分ける(スペース・「、」・カンマ区切りでまとめて追加できる)
   function splitExcludedInput(text){
-    return String(text).split(/[\s\u3001,\uff0c;\uff1b]+/).map(s => s.trim()).filter(Boolean);
+    return String(text).split(/[\s、,，;；]+/).map(s => s.trim()).filter(Boolean);
   }
 
   function renderExcluded(){
@@ -527,10 +527,204 @@
     }
   }
 
-  // ログイン状態が変わるたびに auth.js から呼ばれる。ログイン中は「使わない食材」を、管理者のときだけ管理者用の設定欄を表示する。
+  // ==== 個人的な要望の登録(ログイン中の全員。ユーザーごとにサーバーへ保存) ====
+  // 調理環境や好み(例: 「コンロが1つなので、ガスコンロを使うレシピは1提案につき1つまで」
+  // 「〇〇社のスープポットを使っているので、スープ系はそのスープポットで作れるレシピに」)を自由に書いておくと、
+  // レシピを作るたびに自動でAIの条件に加わります(検索のたびに入力する必要はありません)。
+  //   ・1行に1つの要望を書く(最大10行・1行150文字。サーバーの上限は読み込み時に受け取る)
+  //   ・登録内容はサーバー(GET/PUT /api/user/personal-notes)に保存され、ログインしていれば別の端末でも同じ内容になります
+  //   ・文章を打っている途中で保存が走らないよう、「保存」ボタンを押したときに保存します(「使わない食材」は自動保存)
+  //   ・レシピ作成のときにブラウザから送る必要はなく、サーバーが本人の要望を読んで使います(functions/_lib/recipe-job.js の startJob)
+  //   ・この画面の操作では、AIは呼ばれません(=費用は発生しません)
+  // 設定欄(HTML)とスタイルは、「使わない食材」と同じく index.html / style.css を増やさず、ここで作ります。
+  // 作れなくても、レシピ作成や他の設定は止めません。
+  const NOTES_URL = '/api/user/personal-notes';
+
+  const NOTES_CSS =
+    '#personal-notes-section{margin-top:16px;}' +
+    '#personal-notes-section textarea{display:block; width:100%; box-sizing:border-box; min-height:150px; padding:12px 14px; resize:vertical;' +
+      ' border:1.5px solid var(--line-strong); border-radius:12px; background:#fff; color:var(--ink); font:inherit; font-size:16px; line-height:1.6;}' +
+    '#personal-notes-section .notes-actions{display:flex; align-items:center; gap:12px; margin-top:12px;}' +
+    '#personal-notes-section .notes-actions .btn{flex:0 0 auto; min-height:48px;}' +
+    '#personal-notes-section .stat-line{margin:0; font-weight:500; color:var(--ink-soft); font-size:12.5px;}' +
+    '#personal-notes-section .status-line{text-align:left;}' +
+    '.notes-note{margin-top:14px;}';
+
+  const NOTES_HTML =
+    '<section class="panel">' +
+      '<div class="panel-head"><h3>個人的な要望</h3></div>' +
+      '<p class="input-hint">お使いの調理環境や好みを書いておくと、レシピを作るたびに自動で考慮されます。検索のたびに入力する必要はありません。</p>' +
+      '<div class="field">' +
+        '<label for="notes-input">要望(1行に1つ)</label>' +
+        '<textarea id="notes-input" rows="6" autocomplete="off" autocapitalize="none" ' +
+          'placeholder="例:&#10;コンロが1つなので、ガスコンロを使うレシピは1提案につき1つまでにする&#10;〇〇社のスープポットを使っているので、スープ系のレシピはそのスープポットで作れるものにする"></textarea>' +
+        '<p class="input-hint">1行に1つの要望を書いてください(最大10行・1行150文字まで)。</p>' +
+      '</div>' +
+      '<div class="notes-actions">' +
+        '<button type="button" class="btn btn-secondary" id="btn-notes-save">保存</button>' +
+        '<p class="stat-line" id="notes-count"></p>' +
+      '</div>' +
+      '<p id="notes-status" class="status-line" hidden></p>' +
+      '<p class="input-hint notes-note">保存した内容は、次のレシピ作成から反映されます。AIが要望を守れないことも稀にあります。栄養の目標や「使わない食材」など、アプリ側の条件を変えるような内容は反映されません。</p>' +
+    '</section>';
+
+  let notesSectionEl = null;
+  let notesInputEl = null;
+  let notesCountEl = null;
+  let notesStatusEl = null;
+  let notesSaveBtn = null;
+
+  let notesSaved = [];                                  // サーバーに保存されている内容(未保存の変更があるかの判定用)
+  let notesLimits = { maxLines: 10, maxLength: 150 };   // サーバーの上限(読み込み時に更新される)
+  let notesSaving = false;                              // 保存の通信の最中か
+
+  function showNotesStatus(msg, isError){
+    if(!notesStatusEl) return;
+    notesStatusEl.textContent = msg;
+    notesStatusEl.hidden = !msg;
+    notesStatusEl.style.color = isError ? 'var(--protein)' : 'var(--veg)';
+  }
+
+  function recordNotesError(err, extra){
+    if(typeof logError === 'function') logError('personal-notes', err, extra);
+  }
+
+  // 入力欄の文字を、1行=1要望に分ける(空行は除く。行の中の連続する空白は1つにまとめる)
+  function splitNotesInput(text){
+    return String(text).split(/\r\n|\r|\n/).map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  }
+
+  // 行数の表示と、未保存の変更の表示
+  function renderNotesMeta(){
+    if(!notesCountEl) return;
+    const lines = splitNotesInput(notesInputEl.value);
+    const dirty = lines.join('\n') !== notesSaved.join('\n');
+    notesCountEl.textContent = lines.length + ' / ' + notesLimits.maxLines + ' 行' + (dirty ? '(未保存の変更があります)' : '');
+    notesSaveBtn.disabled = notesSaving;
+  }
+
+  // 失敗時はサーバーが返した日本語メッセージで例外にする(エラーログにも残す)
+  async function notesFetch(options){
+    const method = (options && options.method) || 'GET';
+    let res;
+    try {
+      res = await fetch(NOTES_URL, options);
+    } catch(e){
+      recordNotesError(e, { method: method });
+      throw new Error('通信に失敗しました。電波の良い場所でもう一度お試しください。');
+    }
+    let data = {};
+    try { data = await res.json(); } catch(e){ /* 空のレスポンス */ }
+    if(!data || typeof data !== 'object') data = {};
+    if(!res.ok){
+      const err = new Error(data.error || '通信に失敗しました(' + res.status + ')');
+      recordNotesError(err, { method: method, status: res.status, serverError: data.error });
+      throw err;
+    }
+    return data;
+  }
+
+  function applyNotesData(data){
+    if(Array.isArray(data.notes)) notesSaved = data.notes.filter(x => typeof x === 'string');
+    if(data.maxLines) notesLimits = { maxLines: data.maxLines, maxLength: data.maxLength || notesLimits.maxLength };
+    notesInputEl.value = notesSaved.join('\n'); // サーバーが整えた内容(空行・重複の除去など)に合わせる
+  }
+
+  async function loadNotes(){
+    if(notesSaving) return; // 保存の最中は、古い内容で上書きしない
+    try {
+      applyNotesData(await notesFetch());
+    } catch(err){
+      showNotesStatus(err.message, true);
+    }
+    renderNotesMeta();
+  }
+
+  async function saveNotes(){
+    if(notesSaving) return;
+    const lines = splitNotesInput(notesInputEl.value);
+    // 通信する前に、画面でも上限を確認する(サーバーも同じ確認をする)
+    if(lines.length > notesLimits.maxLines){
+      showNotesStatus('登録できるのは' + notesLimits.maxLines + '行までです。' + (lines.length - notesLimits.maxLines) + '行ぶん減らしてください。', true);
+      return;
+    }
+    const tooLong = lines.find(l => l.length > notesLimits.maxLength);
+    if(tooLong){
+      showNotesStatus('「' + tooLong.slice(0, 8) + '…」は長すぎます(1行' + notesLimits.maxLength + '文字までです)。', true);
+      return;
+    }
+    notesSaving = true;
+    notesSaveBtn.disabled = true;
+    notesSaveBtn.textContent = '保存中…';
+    showNotesStatus('保存しています…', false);
+    try {
+      applyNotesData(await notesFetch({
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: lines }),
+      }));
+      showNotesStatus('保存しました。次のレシピ作成から反映されます。', false);
+    } catch(err){
+      showNotesStatus(err.message, true); // 失敗しても、入力した文章は消さない
+    } finally {
+      notesSaving = false;
+      notesSaveBtn.textContent = '保存';
+      renderNotesMeta();
+    }
+  }
+
+  // 設定欄とスタイルを作って、操作を結びつける(最初に1回)
+  function initPersonalNotes(){
+    try {
+      if(typeof document.createElement !== 'function' || !document.head) return; // 画面部品が使えない環境では何もしない
+      const view = document.getElementById('view-settings');
+      if(!view || !adminSectionEl) return;
+
+      const style = document.createElement('style');
+      style.id = 'personal-notes-style';
+      style.textContent = NOTES_CSS;
+      document.head.appendChild(style);
+
+      notesSectionEl = document.createElement('div');
+      notesSectionEl.id = 'personal-notes-section';
+      notesSectionEl.hidden = true;
+      notesSectionEl.innerHTML = NOTES_HTML;
+      view.insertBefore(notesSectionEl, adminSectionEl); // 「使わない食材」の下・管理者設定の上
+
+      notesInputEl = document.getElementById('notes-input');
+      notesCountEl = document.getElementById('notes-count');
+      notesStatusEl = document.getElementById('notes-status');
+      notesSaveBtn = document.getElementById('btn-notes-save');
+
+      notesSaveBtn.addEventListener('click', saveNotes);
+      notesInputEl.addEventListener('input', renderNotesMeta);
+      renderNotesMeta();
+    } catch(err){
+      notesSectionEl = null; // 作れなかったときは、この機能だけ使わない(ほかの機能は止めない)
+      recordNotesError(err, { step: 'init' });
+    }
+  }
+
+  // ログイン状態が変わるたびに onAuthChanged から呼ばれる。ログイン中だけ設定欄を表示し、登録内容を読み込む
+  function onPersonalNotesAuthChanged(){
+    if(!notesSectionEl) return;
+    const loggedIn = isLoggedIn();
+    notesSectionEl.hidden = !loggedIn;
+    if(loggedIn){
+      loadNotes();
+    } else {
+      notesSaved = [];
+      notesInputEl.value = '';
+      showNotesStatus('', false);
+      renderNotesMeta();
+    }
+  }
+
+  // ログイン状態が変わるたびに auth.js から呼ばれる。ログイン中は「使わない食材」「個人的な要望」を、管理者のときだけ管理者用の設定欄を表示する。
   function onAuthChanged(){
     refreshLogControls();
     onExcludedFoodsAuthChanged();
+    onPersonalNotesAuthChanged();
     if(isAdmin()){
       adminSectionEl.hidden = false;
       loadAdminSettings();
@@ -548,4 +742,5 @@
   foodsImportBtn.addEventListener('click', importFoods);
 
   initExcludedFoods();
+  initPersonalNotes();
   onAuthChanged();
