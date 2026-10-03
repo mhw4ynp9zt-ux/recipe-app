@@ -9,6 +9,12 @@
 // 「使わない食材」は設定タブ(excluded-foods.js)で登録します。ブラウザからは送らず、サーバーが本人の登録を読んで自動で除外します。
 // 除外したはずの食材が結果に残ってしまった場合は、サーバーが excludedHits で知らせ、結果の上に注意を表示します。
 //
+// 手間度(ラク/ふつう/しっかり)は、作る負担(手順の数・使う器具・洗い物)の指定です。utils.js の readEffortLevel / writeEffortLevel /
+// effortOverIndexes / validEffortLevel と config.js の EFFORT_OPTIONS に依存し、無い古い画面では何も出さず・送らず従来どおり動きます。
+// 選択はこの端末に記憶し、作成要求の effortLevel(1〜3)として送ります。AIが返した各品の effortLevel と手順の数が指定を超えていたら、
+// 結果に注意を出します(作り直しはしません。AIの呼び出し回数は増えません)。パネルは index.html に無くても、ここで差し込みます。
+// 以前の「所要時間」のチップは廃止しました(古い index.html に残っていれば、ここで取り除きます)。
+//
 // 食材・料理名/雰囲気/ジャンルは、品ごとに指定できます(2品・3品のとき)。
 // 画面の入力欄は multi-field.js が作り、ここでは createMultiFields.getDishInputs(品数) で品ごとの入力を受け取って、
 // 要求の dishes([{ ingredients, mood }, …]。品数と同じ数)として送ります。従来の ingredients / mood には1品目の内容も入れます(古いサーバー・古い画面との互換)。
@@ -234,11 +240,17 @@
 
   let enabledMetrics = loadEnabledMetrics();
 
-  // ==== 所要時間(全品を同時進行で作り終える上限。端末に記憶する。無い古い画面では何もしない) ====
-  // time-limit.js(readTimeLimit / writeTimeLimit / overLimitIndexes / validMinutes)と config.js の TIME_LIMIT_OPTIONS に依存。
+  // ==== 手間度(1=ラク / 2=ふつう / 3=しっかり。作る負担の指定。端末に記憶する。無い古い画面では何もしない) ====
+  // utils.js(readEffortLevel / writeEffortLevel / effortOverIndexes / validEffortLevel)と config.js の EFFORT_OPTIONS に依存。
   // 注意: updateCreateHint() より前(最初の呼び出しの前)に宣言しておくこと
-  const timeLimitAvailable = typeof TIME_LIMIT_OPTIONS !== 'undefined' && typeof readTimeLimit === 'function';
-  let timeLimit = timeLimitAvailable ? readTimeLimit(localStorage) : null;
+  const effortAvailable = typeof EFFORT_OPTIONS !== 'undefined' && typeof readEffortLevel === 'function';
+  let selectedEffort = effortAvailable ? readEffortLevel(localStorage) : null;
+
+  // 手間度の選択肢(level)に対応する表示名。無いときは空文字
+  function effortLabel(level){
+    const opt = effortAvailable ? EFFORT_OPTIONS.find(o => o.level === level) : null;
+    return opt ? opt.label : '';
+  }
 
   function getActiveMetrics(){
     return NUTRIENT_METRICS.filter(m => enabledMetrics[m.id]);
@@ -263,13 +275,13 @@
   function updateCreateHint(){
     const t = getCreateTarget();
     const active = getActiveMetrics();
-    const timeText = timeLimit ? ' 所要時間は' + timeLimit + '分以内を目安にします。' : '';
+    const effortText = selectedEffort ? ' 手間は「' + effortLabel(selectedEffort) + '」を目安にします。' : '';
     if(!active.length){
-      createHintEl.textContent = '全' + t.count + '品の合計で、栄養バランスの良いレシピを考えます。' + timeText;
+      createHintEl.textContent = '全' + t.count + '品の合計で、栄養バランスの良いレシピを考えます。' + effortText;
       return;
     }
     const parts = active.map(m => m.label + t[m.id] + m.unit);
-    createHintEl.textContent = '全' + t.count + '品の合計で、' + parts.join('・') + 'を目安にレシピを考えます。' + timeText;
+    createHintEl.textContent = '全' + t.count + '品の合計で、' + parts.join('・') + 'を目安にレシピを考えます。' + effortText;
   }
 
   // 入力欄の値を指標ごとに覚えておき、指標のON/OFFで描画し直しても入力した値が消えないようにする
@@ -319,36 +331,62 @@
   renderMetricToggles();
   renderTargetInputs();
 
-  // 所要時間のチップ(指定なし・10/30/45/60分以内)。選択はこの端末に記憶する
-  const timeLimitRowEl = document.getElementById('time-limit-row');
-  function renderTimeLimitToggles(){
-    if(!timeLimitAvailable || !timeLimitRowEl) return;
-    const chip = (minutes, label) => {
-      const on = (timeLimit === minutes);
-      return `<button type="button" class="toggle-btn time-limit-btn${on ? ' active' : ''}" data-minutes="${minutes === null ? '' : minutes}" aria-pressed="${on ? 'true' : 'false'}">${label}</button>`;
-    };
-    timeLimitRowEl.innerHTML = chip(null, '指定なし') + TIME_LIMIT_OPTIONS.map(n => chip(n, n + '分以内')).join('');
-  }
-  if(timeLimitAvailable && timeLimitRowEl){
+  // 手間度のパネルを「品数」の次(作成ボタンの前)に差し込む。index.html は変更不要。
+  // 以前の「所要時間」のパネルが index.html に残っていれば取り除く(時間の指定は画面から外した)。
+  // 差し込み先が無い環境(古い画面・テスト)では何もしない。失敗しても、作成そのものは止めない。
+  function ensureEffortPanel(){
     try {
-      if(!document.getElementById('time-limit-style') && document.head && document.createElement){
+      const oldRow = document.getElementById('time-limit-row');
+      const oldPanel = oldRow && typeof oldRow.closest === 'function' ? oldRow.closest('section') : null;
+      if(oldPanel && typeof oldPanel.remove === 'function') oldPanel.remove();
+      if(document.getElementById('effort-row')) return;
+      const anchor = document.querySelector('.generate-area');
+      if(!anchor || typeof anchor.insertAdjacentHTML !== 'function') return;
+      anchor.insertAdjacentHTML('beforebegin',
+        '<section class="panel step" id="effort-panel">' +
+          '<div class="step-head"><span class="step-num">4</span><h2>手間度</h2><span class="step-tag">任意</span></div>' +
+          '<p class="input-hint step-lead">作る手間(手順の数・使う器具・洗い物)で選べます。選択はこの端末に記憶されます。</p>' +
+          '<div class="count-toggle" id="effort-row" role="group" aria-label="手間度"></div>' +
+          '<p class="input-hint" id="effort-desc" aria-live="polite"></p>' +
+        '</section>');
+    } catch(e){ /* パネルが出ないだけ。作成そのものは止めない */ }
+  }
+
+  // 手間度のチップ(指定なし・ラク・ふつう・しっかり)。選択はこの端末に記憶する
+  if(effortAvailable) ensureEffortPanel();
+  const effortRowEl = effortAvailable ? document.getElementById('effort-row') : null;
+  function renderEffortToggles(){
+    if(!effortRowEl) return;
+    const chip = (level, label) => {
+      const on = (selectedEffort === level);
+      return `<button type="button" class="toggle-btn effort-btn${on ? ' active' : ''}" data-effort="${level === null ? '' : level}" aria-pressed="${on ? 'true' : 'false'}">${label}</button>`;
+    };
+    effortRowEl.innerHTML = chip(null, '指定なし') + EFFORT_OPTIONS.map(o => chip(o.level, o.label)).join('');
+    // 選んだ手間度の説明(指定なしのときは空)
+    const descEl = document.getElementById('effort-desc');
+    const opt = EFFORT_OPTIONS.find(o => o.level === selectedEffort);
+    if(descEl) descEl.textContent = opt ? opt.short : '';
+  }
+  if(effortRowEl){
+    try {
+      if(!document.getElementById('effort-style') && document.head && document.createElement){
         const style = document.createElement('style');
-        style.id = 'time-limit-style';
-        style.textContent = '#time-limit-row{grid-template-columns:repeat(5,1fr);} #time-limit-row .toggle-btn{font-size:13.5px; padding:0 2px;}';
+        style.id = 'effort-style';
+        style.textContent = '#effort-row{grid-template-columns:repeat(4,1fr);} #effort-row .toggle-btn{font-size:13.5px; padding:0 2px;}';
         document.head.appendChild(style);
       }
     } catch(e){ /* 見た目の調整だけ。作成そのものは止めない */ }
-    timeLimitRowEl.addEventListener('click', (e) => {
-      const btn = e.target.closest('.time-limit-btn');
+    effortRowEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.effort-btn');
       if(!btn) return;
-      const n = btn.dataset.minutes === '' ? null : Number(btn.dataset.minutes);
-      if(n !== null && !TIME_LIMIT_OPTIONS.includes(n)) return;
-      timeLimit = n;
-      writeTimeLimit(localStorage, n);
-      renderTimeLimitToggles();
+      const n = btn.dataset.effort === '' ? null : Number(btn.dataset.effort);
+      if(n !== null && !validEffortLevel(n)) return;
+      selectedEffort = n;
+      writeEffortLevel(localStorage, n);
+      renderEffortToggles();
       updateCreateHint();
     });
-    renderTimeLimitToggles();
+    renderEffortToggles();
     updateCreateHint();
   }
 
@@ -429,18 +467,23 @@
       </details>`;
   }
 
-  // 所要時間の注意: AIの目安時間が、指定した上限を超えている品があるとき(作り直しはせず、知らせるだけ)
-  function renderTimeWarn(dishes, maxMinutes){
-    if(!timeLimitAvailable || !TIME_LIMIT_OPTIONS.includes(maxMinutes)) return '';
-    if(!overLimitIndexes(dishes, maxMinutes).length) return '';
-    return '<p class="nutrition-warn">目安が指定(' + maxMinutes + '分)を超えている品があります。もう一度作成するか、条件を変えてください。</p>';
+  // 手間度の注意: AIが判定した手間度や手順の数が、指定した手間度(ラク・ふつう)を超えている品があるとき(作り直しはせず、知らせるだけ)
+  // 「しっかり」・指定なしのときは出さない
+  function renderEffortWarn(dishes, level){
+    if(!effortAvailable || !validEffortLevel(level) || typeof effortOverIndexes !== 'function') return '';
+    if(!effortOverIndexes(dishes, level).length) return '';
+    return '<p class="nutrition-warn">手間が指定(' + escapeHtml(effortLabel(level)) + ')より大きい品があります。もう一度作成するか、条件を変えてください。</p>';
   }
-  // 各品の所要時間の目安(AIが付けた値が有効なときだけ)
-  function renderDishTime(d){
-    return timeLimitAvailable && validMinutes(d.minutes) ? '<p class="dish-macro dish-time">目安 約' + d.minutes + '分</p>' : '';
+  // 各品の手間度(AIが判定した値が有効なときだけ)と、手順の数(コードで数えた値)
+  function renderDishEffort(d){
+    if(!effortAvailable) return '';
+    const parts = [];
+    if(validEffortLevel(d.effortLevel)) parts.push('手間 ' + escapeHtml(effortLabel(d.effortLevel)));
+    if(Array.isArray(d.steps) && d.steps.length) parts.push('工程 ' + d.steps.length);
+    return parts.length ? '<p class="dish-macro dish-effort">' + parts.join(' ・ ') + '</p>' : '';
   }
 
-  function renderCreatedCombo(dishes, nutritionOk, targetCheck, excludedHits, maxMinutes){
+  function renderCreatedCombo(dishes, nutritionOk, targetCheck, excludedHits, effortSel){
     // このバッチで実際に値が入っている指標だけをバッジ・表示対象にする(選択しなかった指標は表示しない)
     const shown = NUTRIENT_METRICS.filter(m => dishes.some(d => d[m.id] != null));
     const offIds = new Set(((targetCheck && targetCheck.results) || []).filter(r => !r.ok).map(r => r.id));
@@ -456,7 +499,7 @@
         </div>` : ''}
         ${renderExcludedWarn(excludedHits)}
         ${nutritionOk ? renderTargetCheck(targetCheck) : ''}
-        ${renderTimeWarn(dishes, maxMinutes)}
+        ${renderEffortWarn(dishes, effortSel)}
         ${dishes.map((d, i) => `
           <div class="dish-block">
             <div class="dish-head">
@@ -464,7 +507,7 @@
               <span class="dish-type-tag">${escapeHtml(d.type)}</span>
             </div>
             <p class="dish-macro">${shown.filter(m => d[m.id] != null).map(m => m.label + ' ' + d[m.id] + m.unit).join(' ・ ')}</p>
-            ${renderDishTime(d)}
+            ${renderDishEffort(d)}
             ${renderNutritionWarn(d)}
             <button class="save-btn${isSaved(d.id) ? ' saved' : ''}" data-id="${d.id}">${isSaved(d.id) ? '★ 保存済み' : '☆ 保存する'}</button>
             <div class="ingredients">
@@ -580,8 +623,10 @@
       // AIが付けた系統・役割(あるときだけ。検証はサーバーで済んでいる)
       if(typeof parsedItem.genre === 'string' && parsedItem.genre) recipe.genre = parsedItem.genre;
       if(typeof parsedItem.role === 'string' && parsedItem.role) recipe.role = parsedItem.role;
-      // AIが付けた所要時間の目安(分。有効な値のときだけ。保存済みレシピにも残る)
-      if(timeLimitAvailable && validMinutes(parsedItem.minutes)) recipe.minutes = parsedItem.minutes;
+      // AIが付けた所要時間の目安(分。有効な値のときだけ。保存済みレシピに残すだけで、画面には出さない)
+      if(typeof validMinutes === 'function' && validMinutes(parsedItem.minutes)) recipe.minutes = parsedItem.minutes;
+      // AIが判定した手間度(1=ラク / 2=ふつう / 3=しっかり。有効な値のときだけ。保存済みレシピにも残る。recipe.effort とは別の項目)
+      if(effortAvailable && validEffortLevel(parsedItem.effortLevel)) recipe.effortLevel = parsedItem.effortLevel;
       // サーバーが成分表から計算した値を記録する。
       //   選択していた指標は従来どおり recipe[指標ID] に(保存済みレシピの表示でも使う。サーバーは選択した指標だけを入れて返す)
       //   全指標・照合の内訳は nutrition / ingredientDetails / nutritionCheck に
@@ -598,7 +643,7 @@
       recipes.push(recipe);
       return recipe;
     });
-    renderCreatedCombo(dishes, nutritionOk, data.targetCheck, data.excludedHits, logContext.request && logContext.request.maxMinutes);
+    renderCreatedCombo(dishes, nutritionOk, data.targetCheck, data.excludedHits, logContext.request && logContext.request.effortLevel);
   }
 
   // 終了処理(成功・失敗どちらでも)。ジョブの控えを消し、待機表示を閉じる
@@ -765,10 +810,10 @@
         body.dishes = dishInputs;
         logContext.request.dishes = dishInputs;
       }
-      // 所要時間の指定(あるときだけ)。ジョブの控え(logContext.request)にも入れ、開き直した後の超過判定でも使う
-      if(timeLimit !== null){
-        body.maxMinutes = timeLimit;
-        logContext.request.maxMinutes = timeLimit;
+      // 手間度の指定(あるときだけ)。ジョブの控え(logContext.request)にも入れ、開き直した後の超過判定でも使う
+      if(selectedEffort !== null){
+        body.effortLevel = selectedEffort;
+        logContext.request.effortLevel = selectedEffort;
       }
       const requestBody = JSON.stringify(body);
       // ジョブを作るだけの短い要求(AIは呼ばれない)。応答が返る前に通信が切れた場合(iOS Safariでは TypeError "Load failed")だけ、

@@ -26,4 +26,13 @@ const ROLES = ['主菜', '副菜', '汁物', '主食'];
 const MAINS = ['肉', '魚介', '卵', '大豆', '野菜', '穀類', 'その他'];
 
 // レシピ作成の所要時間の選択肢(分。全品を同時進行で作り終える上限)。functions/_lib/recipe-prompt.js の MAX_MINUTES_OPTIONS と同じ内容に保つ(test/time-limit_test.mjs が一致を確認する)。
+// ※「作る」タブの画面には出していません(手間度に置き換え)。サーバー側は maxMinutes を受け付けるので、画面に戻すときはここを使います。
 const TIME_LIMIT_OPTIONS = [10, 30, 45, 60];
+
+// レシピ作成の手間度の選択肢(1=ラク / 2=ふつう / 3=しっかり)。functions/_lib/recipe-prompt.js の EFFORT_LEVELS と同じ内容に保つ(test/effort-limit_test.mjs が一致を確認する)。
+// short: 選んだときに画面に出す説明。基準の詳細はサーバー側のプロンプトにある(ラク=手順3つ以内・器具1つ・切る食材2種類まで など)
+const EFFORT_OPTIONS = [
+  { level: 1, label: 'ラク',     short: '手順3つ以内・加熱の器具は1つ・洗い物少なめ' },
+  { level: 2, label: 'ふつう',   short: '手順5つ前後・器具は2つまで' },
+  { level: 3, label: 'しっかり', short: '手間をかけた本格的な料理' },
+];
