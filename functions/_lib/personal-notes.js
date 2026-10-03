@@ -33,14 +33,14 @@ export function parsePersonalNotes(input) {
     const line = cleanLine(raw);
     if (!line) continue;
     if (line.length > MAX_NOTE_LINE_LEN) {
-      return { error: `「${line.slice(0, 8)}…」は長すぎます(1行${MAX_NOTE_LINE_LEN}文字まで)` };
+      return { error: `「${line.slice(0, 8)}…」は長すぎます(1件${MAX_NOTE_LINE_LEN}文字まで)` };
     }
     const key = dedupeKey(line);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(line);
   }
-  if (out.length > MAX_NOTE_LINES) return { error: `登録できるのは${MAX_NOTE_LINES}行までです` };
+  if (out.length > MAX_NOTE_LINES) return { error: `登録できるのは${MAX_NOTE_LINES}件までです` };
   return { value: out };
 }
 
