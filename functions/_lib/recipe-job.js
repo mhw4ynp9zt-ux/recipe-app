@@ -22,6 +22,11 @@
 //     作り直しの回数・AI呼び出しの上限(MAX_ATTEMPTS / MAX_AI_CALLS)は変わらない(=費用の上限も変わらない)
 //   ・上限まで作り直しても残ったときは、result.excludedHits で画面に知らせる
 //
+// ユーザーごとの「個人的な要望」(設定タブで登録。調理環境・好み)
+//   ・startJob がDBから読み(読むだけ。AIは呼ばない)、ジョブの条件(request.personalNotes)に入れる。画面から送られた値は使わない
+//   ・AIへの指示は buildPrompt / buildRetryPrompt が作る。守れたかどうかはコードで判定できないため、作り直しの条件には使わない
+//     (=AIの呼び出し回数は、要望の有無で変わらない。MAX_ATTEMPTS / MAX_AI_CALLS も変わらない)
+//
 // 依存(AI設定・プロンプト・栄養計算など)は deps で受け取る。本番は recipe-job-deps.js の defaultDeps、
 // テストでは偽物を渡して、実際のAI(有料)を呼ばずに動かせる。
 
@@ -166,6 +171,17 @@ async function startJob(env, user, body, deps, now = Date.now()) {
     return fail("サーバーでエラーが発生しました。もう一度お試しください", 500);
   }
 
+  // ユーザーごとに登録された「個人的な要望」(調理環境・好み)を読む(DBを読むだけ。AIは呼ばない)。
+  // 「使わない食材」と同じく、画面からは受け取らず(本人の登録内容だけが使われる)、読めなかったときは、
+  // 要望が効かないまま作らないよう、利用回数を消費する前に失敗にする。
+  try {
+    req.personalNotes = deps.loadPersonalNotes ? await deps.loadPersonalNotes(env, user.id) : [];
+  } catch (e) {
+    console.error("loadPersonalNotes failed: " + (e && e.message));
+    trace.error("load_personal_notes_failed", e);
+    return fail("サーバーでエラーが発生しました。もう一度お試しください", 500);
+  }
+
   let ai;
   try {
     ai = await deps.loadAiSettings(env, { decrypt: true });
@@ -181,6 +197,7 @@ async function startJob(env, user, body, deps, now = Date.now()) {
     targets: req.metrics.map((m) => m.id + "=" + m.target + m.unit),
     ingredientsChars: req.ingredients.length, moodChars: req.mood.length,
     excludedCount: req.excluded.length,
+    personalNotesCount: req.personalNotes.length,
   });
   if (!ai.apiKey) {
     trace.add("no_api_key", { reason: ai.keyError ? "保存済みのAPIキーを復号できません(SETTINGS_ENC_KEYが変わった可能性)" : "APIキーが未設定です" }, "error");
