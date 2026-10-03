@@ -42,34 +42,63 @@ const MAX_MOOD_LEN = 300;        // 1品あたり(従来の全品共通の入力
 // 所要時間の指定(分)。js/config.js の TIME_LIMIT_OPTIONS と同じ内容に保つ(テストで一致を確認)
 const MAX_MINUTES_OPTIONS = [10, 30, 45, 60];
 
-// ==== 手間度の指定(1=ラク / 2=ふつう / 3=しっかり) ====
+// ==== 手間度の指定(0=超ラク / 1=ラク / 2=ふつう / 3=しっかり) ====
 // js/config.js の EFFORT_OPTIONS の level と同じ内容に保つ(テストで一致を確認)。
-// 時間ではなく「作る負担(手順の数・使う器具・包丁で切る食材・洗い物)」で絞る指定。リクエストの effortLevel に入る。
-//   ・1(ラク)・2(ふつう)は上限の指定。3(しっかり)は「手間をかけた本格的な料理にする」という指定で、上限ではない。
+// 時間ではなく「作る負担(手順の数・使う器具・包丁で切る食材・洗い物)」で絞る指定。
+//   ・品ごとに指定する(dishes[i].effortLevel)。全品共通の effortLevel も受け付ける(古い画面との互換。品ごとの指定が無い品に使う)。
+//   ・0(超ラク)・1(ラク)・2(ふつう)は上限の指定。3(しっかり)は「手間をかけた本格的な料理にする」という指定で、上限ではない。
+//   ・注意: 0 は「指定なし」とは別の値(未指定・null が指定なし)。0 を偽(falsy)として扱わないこと。
 //   ・指定があるときだけ、EFFORT_RULES を【必ず守る条件】に足し、手順の数の指示(EFFORT_STEP_RULES)を差し替える。
-//   ・手順の数の基準は、画面側 js/utils.js の EFFORT_STEP_LIMIT(ラク3・ふつう6)と合わせる。
+//   ・手順の数の基準は、画面側 js/utils.js の EFFORT_STEP_LIMIT(ラク3・ふつう6。超ラクは手順数の上限なし)と合わせる。
 //   ・AIの呼び出し回数・作り直しの条件には一切関わらない(判定は画面側で、超えていても作り直さず注意を出すだけ)。
-const EFFORT_LEVELS = [1, 2, 3];
+const EFFORT_LEVELS = [0, 1, 2, 3];
+const EFFORT_NAMES = { 0: '超ラク', 1: 'ラク', 2: 'ふつう', 3: 'しっかり' };
+// 全品が同じ手間度のとき(1行)
 const EFFORT_RULES = {
+  0: '・【手間度: 超ラク】各品とも、包丁とまな板を使わずに作れる料理にする。食材は、切らずにそのまま使えるもの(カット済み・缶詰・パウチ・豆腐・納豆・卵・冷凍野菜・サラダチキン・海苔・チーズなど)にするか、手でちぎる・キッチンばさみで切るだけで使えるものにする。皮むき・すりおろし・干物や乾物の戻し・漬け込み・裏ごしなど、下ごしらえに手間がかかる工程は入れない。加熱・調理に使う器具は1つまで(電子レンジだけ、火を使わず和えるだけ、も可)。洗い物も少なくする\n',
   1: '・【手間度: ラク】各品とも、とにかく手間と洗い物を少なくする。加熱・調理に使う器具は1つだけ(フライパン・鍋・電子レンジ・スープメーカーのどれか1つ)。包丁で切る食材は2種類まで(カット済みの食材・キッチンばさみ・手でちぎる、を活用してよい)。干物や乾物の戻し・長時間の漬け込み・裏ごしなど、下ごしらえに手間がかかる工程は入れない\n',
   2: '・【手間度: ふつう】各品とも、加熱・調理に使う器具は2つまで。包丁で切る食材は4種類まで。長時間の下ごしらえや凝った工程は入れない\n',
   3: '・【手間度: しっかり】手間をかけた本格的な料理にする。下ごしらえ・煮込み・仕込みなどに時間をかけてよい(ただし、他の条件は守る)\n',
+};
+// 品ごとに手間度が違うとき、「n品目: ○○」の後ろに付ける、その品の基準
+const EFFORT_DISH_RULES = {
+  0: '包丁とまな板を使わない(食材は切らずにそのまま使えるもの、または手でちぎる・キッチンばさみで切るだけで使えるもの。カット済み・缶詰・パウチ・豆腐・納豆・卵・冷凍野菜・サラダチキンなど)。皮むき・すりおろし・戻し・漬け込みなど手間のかかる下ごしらえは入れない。加熱・調理の器具は1つまで(電子レンジだけ・火を使わず和えるだけも可)。洗い物も少なくする',
+  1: '加熱・調理の器具は1つだけ。包丁で切る食材は2種類まで(カット済み・キッチンばさみ・手でちぎる、を活用してよい)。手間のかかる下ごしらえは入れない',
+  2: '加熱・調理の器具は2つまで。包丁で切る食材は4種類まで。長時間の下ごしらえや凝った工程は入れない',
+  3: '手間をかけた本格的な料理にする(下ごしらえ・煮込み・仕込みに時間をかけてよい)',
 };
 // 手順の数の指示。指定なしのときは従来の文(EFFORT_STEP_RULE_DEFAULT)のまま
 const EFFORT_STEP_RULE_DEFAULT =
   '・各品の手順は4〜7ステップ程度で具体的に書く。下味・火加減・加熱時間・焼き色・味付けのタイミングなど、美味しく仕上げるコツも手順に入れる\n';
 const EFFORT_STEP_RULES = {
+  0: '・各品の手順は、楽に作れる範囲で必要なだけにする(数は問わない)。調味料の量・加熱時間・混ぜ方など、美味しく仕上げるコツは手順に入れる\n',
   1: '・各品の手順は3ステップ以内にまとめる。下味・火加減・加熱時間など、美味しく仕上げるコツも、その3ステップの中に入れる\n',
   2: '・各品の手順は5ステップ前後(4〜6ステップ)で具体的に書く。下味・火加減・加熱時間・味付けのタイミングなど、美味しく仕上げるコツも手順に入れる\n',
   3: '・各品の手順は5〜8ステップで具体的に書く。下味・火加減・加熱時間・焼き色・味付けのタイミングなど、美味しく仕上げるコツも手順に入れる\n',
 };
+// 品ごとに手間度が違うときの、手順の数の指示(その品の手間度に合わせる)
+const EFFORT_STEP_RULE_MIXED =
+  '・各品の手順の数は、その品の手間度に合わせる(超ラク: 楽に作れる範囲で必要なだけ / ラク: 3ステップ以内 / ふつう: 5ステップ前後 / しっかり: 5〜8ステップ / 手間度の指定なしの品: 4〜7ステップ程度)。下味・火加減・加熱時間・味付けのタイミングなど、美味しく仕上げるコツも手順に入れる\n';
+
+// 品ごとの手間度の配列(長さ=品数。値は 0〜3 または null=指定なし)。どの品にも指定が無ければ null
+function effortsOf(req) {
+  const n = Number(req.count) || 0;
+  const arr = [];
+  for (let i = 0; i < n; i++) {
+    const d = Array.isArray(req.dishes) ? req.dishes[i] : undefined;
+    let v = d && EFFORT_LEVELS.includes(d.effortLevel) ? d.effortLevel : null;
+    if (v === null && EFFORT_LEVELS.includes(req.effortLevel)) v = req.effortLevel;
+    arr.push(v);
+  }
+  return arr.some((v) => v !== null) ? arr : null;
+}
 
 function cleanText(value) {
   // 改行などの制御文字は空白にしてプロンプトを崩されないようにする
   return String(value).replace(/[\u0000-\u001f\u007f]/g, " ").trim();
 }
 
-// 品ごとの指定(body.dishes)を検証して整える。成功: { list: [{ ingredients, mood }] }(品数と同じ数) / 失敗: { error }
+// 品ごとの指定(body.dishes)を検証して整える。成功: { list: [{ ingredients, mood, effortLevel? }] }(品数と同じ数。effortLevel は 0〜3 のときだけ付く) / 失敗: { error }
 // 各品は { ingredients, mood } の文字列(省略・空なら指定なし)。数が品数と合わない、形が違う、長すぎる場合は失敗。
 function parseDishSpecs(raw, count) {
   if (!Array.isArray(raw) || raw.length !== count) return { error: "品ごとの指定の数が品数と合いません" };
@@ -84,6 +113,11 @@ function parseDishSpecs(raw, count) {
       if (v !== undefined && v !== null && typeof v !== "string") return { error: "品ごとの指定の形式が不正です" };
       out[key] = typeof v === "string" ? cleanText(v) : "";
       if (out[key].length > max) return { error: `${i + 1}品目の${label}の入力が長すぎます(${max}文字まで)` };
+    }
+    const ef = item.effortLevel;
+    if (ef !== undefined && ef !== null) {
+      if (!EFFORT_LEVELS.includes(ef)) return { error: "手間度の指定が不正です" };
+      out.effortLevel = ef;
     }
     list.push(out);
   }
@@ -110,6 +144,7 @@ function parseCreateRequest(body) {
 
   // 品ごとの指定がある場合は、全品共通の ingredients / mood よりこちらを優先する
   let dishes;
+  let dishEffort; // 1品のときの、その品の手間度(0〜3)
   if (body.dishes !== undefined && body.dishes !== null) {
     const r = parseDishSpecs(body.dishes, count);
     if (r.error) return { error: r.error };
@@ -117,11 +152,12 @@ function parseCreateRequest(body) {
       // 1品だけなら従来の形(プロンプトも従来と同じ)
       ingredients = r.list[0].ingredients;
       mood = r.list[0].mood;
+      if (r.list[0].effortLevel !== undefined) dishEffort = r.list[0].effortLevel;
     } else {
       // 2品以上: どれかに指定があれば品ごとの形にする。ingredients / mood は記録用に全品分をつないだ文字列
       ingredients = r.list.map((d) => d.ingredients).filter(Boolean).join(" ");
       mood = r.list.map((d) => d.mood).filter(Boolean).join("、");
-      if (r.list.some((d) => d.ingredients || d.mood)) dishes = r.list;
+      if (r.list.some((d) => d.ingredients || d.mood || d.effortLevel !== undefined)) dishes = r.list;
     }
   }
 
@@ -143,11 +179,11 @@ function parseCreateRequest(body) {
     maxMinutes = body.maxMinutes;
   }
 
-  // 手間度(1=ラク / 2=ふつう / 3=しっかり)。無い(null/未指定)なら指定なし。値は選択肢のどれかだけ(数値型のみ)
-  let effortLevel;
+  // 手間度(0=超ラク / 1=ラク / 2=ふつう / 3=しっかり)。全品共通の指定(品ごとの指定が無い品に使う)。無い(null/未指定)なら指定なし。値は選択肢のどれかだけ(数値型のみ)
+  let effortLevel = dishEffort;
   if (body.effortLevel !== undefined && body.effortLevel !== null) {
     if (!EFFORT_LEVELS.includes(body.effortLevel)) return { error: "手間度の指定が不正です" };
-    effortLevel = body.effortLevel;
+    if (effortLevel === undefined) effortLevel = body.effortLevel;
   }
 
   const value = { ingredients, mood, count, metrics };
@@ -256,8 +292,20 @@ function buildPrompt(req) {
     ? '・全品を同時進行で作って' + req.maxMinutes + '分以内に終わる料理にする(下ごしらえ・加熱を含む)\n'
     : '';
   // 手間度の指定(あるときだけ)。条件の1行と、手順の数の指示(指定なしのときは従来の文のまま)
-  const effortRule = EFFORT_LEVELS.includes(req.effortLevel) ? EFFORT_RULES[req.effortLevel] : '';
-  const stepRule = EFFORT_LEVELS.includes(req.effortLevel) ? EFFORT_STEP_RULES[req.effortLevel] : EFFORT_STEP_RULE_DEFAULT;
+  //   ・全品が同じ手間度 → 1行の条件(従来と同じ文)/ 品ごとに違う → 品ごとの条件(配列の順番に対応)/ どの品にも指定なし → 条件なし
+  const efforts = effortsOf(req);
+  let effortRule = '';
+  let stepRule = EFFORT_STEP_RULE_DEFAULT;
+  if (efforts) {
+    if (efforts.every((v) => v === efforts[0])) {
+      effortRule = EFFORT_RULES[efforts[0]];
+      stepRule = EFFORT_STEP_RULES[efforts[0]];
+    } else {
+      effortRule = '・手間度は品ごとに次のとおり守る(出力するJSON配列の順番に対応。1番目が1品目)。「手間度の指定なし」の品は自由に決めてよい\n' +
+        efforts.map((v, i) => '  ' + (i + 1) + '品目【' + (v === null ? '手間度の指定なし' : EFFORT_NAMES[v]) + '】' + (v === null ? '' : ': ' + EFFORT_DISH_RULES[v]) + '\n').join('');
+      stepRule = EFFORT_STEP_RULE_MIXED;
+    }
+  }
 
   // 食材・雰囲気の指定。品ごとの指定があるときは「各品の指定」に、無いときは従来の全品共通の2項目にする
   const specSection = dishSpecs.length
@@ -311,7 +359,7 @@ function buildPrompt(req) {
     '    "genre": "' + GENRES.join('・') + 'のいずれか、最も近いもの",\n' +
     '    "role": "' + ROLES.join('・') + 'のいずれか、献立での役割",\n' +
     '    "minutes": 所要時間の分(整数。下ごしらえ・加熱を含む),\n' +
-    '    "effortLevel": この品の手間度(整数。1=ラク:手順3つ以内・加熱の器具1つ・切る食材2種類まで / 2=ふつう:手順5つ前後・器具2つまで / 3=しっかり:それ以上に手間をかけた料理。実際の手順と器具に合わせて判定する),\n' +
+    '    "effortLevel": この品の手間度(整数。0=超ラク:包丁・まな板を使わない / 1=ラク:手順3つ以内・加熱の器具1つ・切る食材2種類まで / 2=ふつう:手順5つ前後・器具2つまで / 3=しっかり:それ以上に手間をかけた料理。実際の手順と器具に合わせて判定する),\n' +
     '    "ingredients": [\n' +
     '      { "name": "食材名", "amount": "分量の表記", "grams": 正味のg(数値), "food": "成分表の食品名" }\n' +
     '    ],\n' +
@@ -484,7 +532,7 @@ function parseDishes(content, req) {
     if (typeof item.role === "string" && ROLES.includes(item.role.trim())) dish.role = item.role.trim();
     // 所要時間(分)は、1〜240の整数のときだけ付ける(欠けた値・範囲外は項目ごと無し。エラーにはしない)
     if (typeof item.minutes === "number" && Number.isInteger(item.minutes) && item.minutes >= 1 && item.minutes <= 240) dish.minutes = item.minutes;
-    // 手間度(1=ラク / 2=ふつう / 3=しっかり)は、数値の1〜3のときだけ付ける(欠けた値・範囲外は項目ごと無し。エラーにはしない)
+    // 手間度(0=超ラク / 1=ラク / 2=ふつう / 3=しっかり)は、数値の0〜3のときだけ付ける(欠けた値・範囲外は項目ごと無し。エラーにはしない)
     if (typeof item.effortLevel === "number" && EFFORT_LEVELS.includes(item.effortLevel)) dish.effortLevel = item.effortLevel;
     if (!dish.ingredients.length || !dish.steps.length) throw new Error("empty ingredients or steps");
     return dish;
