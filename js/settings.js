@@ -540,12 +540,6 @@
   // 作れなくても、レシピ作成や他の設定は止めません。
   const NOTES_URL = '/api/user/personal-notes';
 
-  const NOTES_EXAMPLES = [
-    '例: コンロが1つなので、ガスコンロを使うレシピは1提案につき1つまで',
-    '例: 〇〇社のスープポットを使っているので、スープ系はそのスープポットで作れるものにしたい',
-    '例: 電子レンジは使えない',
-  ];
-
   const NOTES_CSS =
     '#personal-notes-section{margin-top:16px;}' +
     '#personal-notes-section .notes-list{display:flex; flex-direction:column; gap:10px; margin:0;}' +
@@ -565,7 +559,7 @@
   const NOTES_HTML =
     '<section class="panel">' +
       '<div class="panel-head"><h3>マイキッチン</h3></div>' +
-      '<p class="input-hint">お使いの調理器具や台所の事情、こだわりを登録しておくと、あなたの台所にぴったりのレシピを提案します。検索のたびに入力する必要はありません。</p>' +
+      '<p class="input-hint">お使いの調理器具や台所の事情、こだわりを登録しておくと、あなたの台所にぴったりのレシピを提案します。検索のたびに入力する必要はありません。<br>例:「コンロが1つなので、ガスコンロを使うレシピは1提案につき1つまで」「〇〇社のスープポットを使っているので、スープ系はそのスープポットで作れるものにしたい」</p>' +
       '<div class="field">' +
         '<label id="notes-label">わが家の台所のこと・こだわり(1件ずつ)</label>' +
         '<div class="notes-list" id="notes-list" role="group" aria-labelledby="notes-label"></div>' +
@@ -613,13 +607,6 @@
     return notesInputs().map(i => cleanNote(i.value)).filter(Boolean);
   }
 
-  // 「例:」の薄い文字は、欄の位置ごとに変える
-  function refreshNotesPlaceholders(){
-    notesInputs().forEach((input, i) => {
-      input.placeholder = NOTES_EXAMPLES[i % NOTES_EXAMPLES.length];
-    });
-  }
-
   function fitNotesInput(el){
     el.style.height = 'auto';
     if(el.scrollHeight) el.style.height = el.scrollHeight + 2 + 'px';
@@ -660,7 +647,6 @@
       if(!notesInputs().length) addNotesRow('');   // 欄がなくならないよう、最後の1つは空の欄を残す
       renderNotesMeta();
     });
-    refreshNotesPlaceholders();
     fitNotesInput(input);
     return input;
   }
