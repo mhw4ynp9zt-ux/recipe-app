@@ -42,6 +42,28 @@ const MAX_MOOD_LEN = 300;        // 1品あたり(従来の全品共通の入力
 // 所要時間の指定(分)。js/config.js の TIME_LIMIT_OPTIONS と同じ内容に保つ(テストで一致を確認)
 const MAX_MINUTES_OPTIONS = [10, 30, 45, 60];
 
+// ==== 手間度の指定(1=ラク / 2=ふつう / 3=しっかり) ====
+// js/config.js の EFFORT_OPTIONS の level と同じ内容に保つ(テストで一致を確認)。
+// 時間ではなく「作る負担(手順の数・使う器具・包丁で切る食材・洗い物)」で絞る指定。リクエストの effortLevel に入る。
+//   ・1(ラク)・2(ふつう)は上限の指定。3(しっかり)は「手間をかけた本格的な料理にする」という指定で、上限ではない。
+//   ・指定があるときだけ、EFFORT_RULES を【必ず守る条件】に足し、手順の数の指示(EFFORT_STEP_RULES)を差し替える。
+//   ・手順の数の基準は、画面側 js/utils.js の EFFORT_STEP_LIMIT(ラク3・ふつう6)と合わせる。
+//   ・AIの呼び出し回数・作り直しの条件には一切関わらない(判定は画面側で、超えていても作り直さず注意を出すだけ)。
+const EFFORT_LEVELS = [1, 2, 3];
+const EFFORT_RULES = {
+  1: '・【手間度: ラク】各品とも、とにかく手間と洗い物を少なくする。加熱・調理に使う器具は1つだけ(フライパン・鍋・電子レンジ・スープメーカーのどれか1つ)。包丁で切る食材は2種類まで(カット済みの食材・キッチンばさみ・手でちぎる、を活用してよい)。干物や乾物の戻し・長時間の漬け込み・裏ごしなど、下ごしらえに手間がかかる工程は入れない\n',
+  2: '・【手間度: ふつう】各品とも、加熱・調理に使う器具は2つまで。包丁で切る食材は4種類まで。長時間の下ごしらえや凝った工程は入れない\n',
+  3: '・【手間度: しっかり】手間をかけた本格的な料理にする。下ごしらえ・煮込み・仕込みなどに時間をかけてよい(ただし、他の条件は守る)\n',
+};
+// 手順の数の指示。指定なしのときは従来の文(EFFORT_STEP_RULE_DEFAULT)のまま
+const EFFORT_STEP_RULE_DEFAULT =
+  '・各品の手順は4〜7ステップ程度で具体的に書く。下味・火加減・加熱時間・焼き色・味付けのタイミングなど、美味しく仕上げるコツも手順に入れる\n';
+const EFFORT_STEP_RULES = {
+  1: '・各品の手順は3ステップ以内にまとめる。下味・火加減・加熱時間など、美味しく仕上げるコツも、その3ステップの中に入れる\n',
+  2: '・各品の手順は5ステップ前後(4〜6ステップ)で具体的に書く。下味・火加減・加熱時間・味付けのタイミングなど、美味しく仕上げるコツも手順に入れる\n',
+  3: '・各品の手順は5〜8ステップで具体的に書く。下味・火加減・加熱時間・焼き色・味付けのタイミングなど、美味しく仕上げるコツも手順に入れる\n',
+};
+
 function cleanText(value) {
   // 改行などの制御文字は空白にしてプロンプトを崩されないようにする
   return String(value).replace(/[\u0000-\u001f\u007f]/g, " ").trim();
@@ -121,9 +143,17 @@ function parseCreateRequest(body) {
     maxMinutes = body.maxMinutes;
   }
 
+  // 手間度(1=ラク / 2=ふつう / 3=しっかり)。無い(null/未指定)なら指定なし。値は選択肢のどれかだけ(数値型のみ)
+  let effortLevel;
+  if (body.effortLevel !== undefined && body.effortLevel !== null) {
+    if (!EFFORT_LEVELS.includes(body.effortLevel)) return { error: "手間度の指定が不正です" };
+    effortLevel = body.effortLevel;
+  }
+
   const value = { ingredients, mood, count, metrics };
   if (dishes) value.dishes = dishes;
   if (maxMinutes !== undefined) value.maxMinutes = maxMinutes;
+  if (effortLevel !== undefined) value.effortLevel = effortLevel;
   return { value };
 }
 
@@ -225,6 +255,9 @@ function buildPrompt(req) {
   const timeRule = MAX_MINUTES_OPTIONS.includes(req.maxMinutes)
     ? '・全品を同時進行で作って' + req.maxMinutes + '分以内に終わる料理にする(下ごしらえ・加熱を含む)\n'
     : '';
+  // 手間度の指定(あるときだけ)。条件の1行と、手順の数の指示(指定なしのときは従来の文のまま)
+  const effortRule = EFFORT_LEVELS.includes(req.effortLevel) ? EFFORT_RULES[req.effortLevel] : '';
+  const stepRule = EFFORT_LEVELS.includes(req.effortLevel) ? EFFORT_STEP_RULES[req.effortLevel] : EFFORT_STEP_RULE_DEFAULT;
 
   // 食材・雰囲気の指定。品ごとの指定があるときは「各品の指定」に、無いときは従来の全品共通の2項目にする
   const specSection = dishSpecs.length
@@ -256,6 +289,7 @@ function buildPrompt(req) {
     excludedRule +
     dishRule +
     genreRule +
+    effortRule +
     timeRule +
     '・油はごま油かオリーブオイルのみ使用する(サラダ油などの他の植物油は使わない)\n' +
     '・ハム・ソーセージ・ベーコンなどの加工肉は使わない\n' +
@@ -266,7 +300,7 @@ function buildPrompt(req) {
     '・grams は、皮・骨・種・ヘタなどを除いて実際に食べる部分(正味)の重さを、g単位の数値で入れる。個数・大さじ・少々・適量も目安のgに換算する(例: 塩少々=0.5、しょうゆ大さじ1=18、砂糖大さじ1=9、油大さじ1=12)。水やお湯は 0 にする\n' +
     '・food は、文部科学省「日本食品標準成分表(八訂)」の食品名の表記に合わせ、スペース区切りで書く。生の食材は末尾に「生」を付ける。ひらがな・カタカナも成分表の表記に合わせる(例: "たまねぎ りん茎 生"、"にんじん 根 皮なし 生"、"ぶた ロース 脂身つき 生"、"にわとり むね 皮なし 生"、"鶏卵 全卵 生"、"こいくちしょうゆ"、"食塩"、"オリーブ油")。水など成分表にないものは空文字にする\n' +
     '・栄養量はこちらで成分表から計算するため、出力しない\n' +
-    '・各品の手順は4〜7ステップ程度で具体的に書く。下味・火加減・加熱時間・焼き色・味付けのタイミングなど、美味しく仕上げるコツも手順に入れる\n' +
+    stepRule +
     '・ガスコンロ(フライパン・鍋など)を使う料理は全品の中で1品までにする(スープ類はスープメーカー使用として対象外)\n' +
     soupRule + '\n' +
     '出力は必ずちょうど' + count + '個の要素を持つ、以下の形式のJSON配列のみとしてください(キーはこの通りに、値は日本語で入れる):\n' +
@@ -277,6 +311,7 @@ function buildPrompt(req) {
     '    "genre": "' + GENRES.join('・') + 'のいずれか、最も近いもの",\n' +
     '    "role": "' + ROLES.join('・') + 'のいずれか、献立での役割",\n' +
     '    "minutes": 所要時間の分(整数。下ごしらえ・加熱を含む),\n' +
+    '    "effortLevel": この品の手間度(整数。1=ラク:手順3つ以内・加熱の器具1つ・切る食材2種類まで / 2=ふつう:手順5つ前後・器具2つまで / 3=しっかり:それ以上に手間をかけた料理。実際の手順と器具に合わせて判定する),\n' +
     '    "ingredients": [\n' +
     '      { "name": "食材名", "amount": "分量の表記", "grams": 正味のg(数値), "food": "成分表の食品名" }\n' +
     '    ],\n' +
@@ -449,9 +484,11 @@ function parseDishes(content, req) {
     if (typeof item.role === "string" && ROLES.includes(item.role.trim())) dish.role = item.role.trim();
     // 所要時間(分)は、1〜240の整数のときだけ付ける(欠けた値・範囲外は項目ごと無し。エラーにはしない)
     if (typeof item.minutes === "number" && Number.isInteger(item.minutes) && item.minutes >= 1 && item.minutes <= 240) dish.minutes = item.minutes;
+    // 手間度(1=ラク / 2=ふつう / 3=しっかり)は、数値の1〜3のときだけ付ける(欠けた値・範囲外は項目ごと無し。エラーにはしない)
+    if (typeof item.effortLevel === "number" && EFFORT_LEVELS.includes(item.effortLevel)) dish.effortLevel = item.effortLevel;
     if (!dish.ingredients.length || !dish.steps.length) throw new Error("empty ingredients or steps");
     return dish;
   });
 }
 
-export { MAX_MINUTES_OPTIONS, parseCreateRequest, buildPrompt, buildRetryPrompt, checkTargets, maxTokensFor, parseDishes, TOLERANCE, AIM_TOLERANCE };
+export { MAX_MINUTES_OPTIONS, EFFORT_LEVELS, parseCreateRequest, buildPrompt, buildRetryPrompt, checkTargets, maxTokensFor, parseDishes, TOLERANCE, AIM_TOLERANCE };
