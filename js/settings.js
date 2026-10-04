@@ -528,8 +528,7 @@
   }
 
   // ==== マイキッチン(ログイン中の全員。ユーザーごとにサーバーへ保存) ====
-  // 調理器具や台所の事情、こだわり(例: 「コンロが1つなので、ガスコンロを使うレシピは1提案につき1つまで」
-  // 「〇〇社のスープポットを使っているので、スープ系はそのスープポットで作れるレシピに」)を登録しておくと、
+  // 調理器具や台所の事情、こだわり(例: 「コンロが1つなので、ガスコンロを使うレシピは1提案につき1つまで」)を登録しておくと、
   // レシピを作るたびに自動でAIの条件に加わります(検索のたびに入力する必要はありません)。
   //   ・1件ずつ入力する動的フォーム(「＋ 追加」で入力欄が増え、「×」で消せる。最大10件・1件150文字。サーバーの上限は読み込み時に受け取る)
   //   ・登録内容はサーバー(GET/PUT /api/user/personal-notes)に保存され、ログインしていれば別の端末でも同じ内容になります
@@ -559,7 +558,7 @@
   const NOTES_HTML =
     '<section class="panel">' +
       '<div class="panel-head"><h3>マイキッチン</h3></div>' +
-      '<p class="input-hint">お使いの調理器具や台所の事情、こだわりを登録しておくと、あなたの台所にぴったりのレシピを提案します。検索のたびに入力する必要はありません。<br>例:「コンロが1つなので、ガスコンロを使うレシピは1提案につき1つまで」「〇〇社のスープポットを使っているので、スープ系はそのスープポットで作れるものにしたい」</p>' +
+      '<p class="input-hint">お使いの調理器具や台所の事情、こだわりを登録しておくと、あなたの台所にぴったりのレシピを提案します。検索のたびに入力する必要はありません。<br>例:「コンロが1つなので、ガスコンロを使うレシピは1提案につき1つまで」</p>' +
       '<div class="field">' +
         '<label id="notes-label">わが家の台所のこと・こだわり(1件ずつ)</label>' +
         '<div class="notes-list" id="notes-list" role="group" aria-labelledby="notes-label"></div>' +
@@ -802,6 +801,7 @@
     refreshLogControls();
     onExcludedFoodsAuthChanged();
     onPersonalNotesAuthChanged();
+    if(typeof onAppliancesAuthChanged === 'function') onAppliancesAuthChanged(); // js/appliances.js(settings.js の後に読み込まれる)
     if(isAdmin()){
       adminSectionEl.hidden = false;
       loadAdminSettings();
