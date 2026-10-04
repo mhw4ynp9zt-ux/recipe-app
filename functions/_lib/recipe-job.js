@@ -27,6 +27,11 @@
 //   ・AIへの指示は buildPrompt / buildRetryPrompt が作る。守れたかどうかはコードで判定できないため、作り直しの条件には使わない
 //     (=AIの呼び出し回数は、要望の有無で変わらない。MAX_ATTEMPTS / MAX_AI_CALLS も変わらない)
 //
+// ユーザーごとの「使っている調理家電」(設定タブで登録。名前・できる操作・使い方の方針・補足)
+//   ・startJob がDBから読み(読むだけ。AIは呼ばない)、ジョブの条件(request.appliances)に入れる。画面から送られた値は使わない
+//   ・AIへの指示は buildPrompt / buildRetryPrompt が作る。守れたかどうかはコードで判定できないため、作り直しの条件には使わない
+//     (=AIの呼び出し回数は、家電の有無で変わらない。MAX_ATTEMPTS / MAX_AI_CALLS も変わらない)
+//
 // 依存(AI設定・プロンプト・栄養計算など)は deps で受け取る。本番は recipe-job-deps.js の defaultDeps、
 // テストでは偽物を渡して、実際のAI(有料)を呼ばずに動かせる。
 
@@ -182,6 +187,17 @@ async function startJob(env, user, body, deps, now = Date.now()) {
     return fail("サーバーでエラーが発生しました。もう一度お試しください", 500);
   }
 
+  // ユーザーごとに登録された「使っている調理家電」を読む(DBを読むだけ。AIは呼ばない)。
+  // 「個人的な要望」と同じく、画面からは受け取らず(本人の登録内容だけが使われる)、読めなかったときは、
+  // 家電が効かないまま作らないよう、利用回数を消費する前に失敗にする。
+  try {
+    req.appliances = deps.loadAppliances ? await deps.loadAppliances(env, user.id) : [];
+  } catch (e) {
+    console.error("loadAppliances failed: " + (e && e.message));
+    trace.error("load_appliances_failed", e);
+    return fail("サーバーでエラーが発生しました。もう一度お試しください", 500);
+  }
+
   let ai;
   try {
     ai = await deps.loadAiSettings(env, { decrypt: true });
@@ -198,6 +214,7 @@ async function startJob(env, user, body, deps, now = Date.now()) {
     ingredientsChars: req.ingredients.length, moodChars: req.mood.length,
     excludedCount: req.excluded.length,
     personalNotesCount: req.personalNotes.length,
+    appliancesCount: req.appliances.length,
   });
   if (!ai.apiKey) {
     trace.add("no_api_key", { reason: ai.keyError ? "保存済みのAPIキーを復号できません(SETTINGS_ENC_KEYが変わった可能性)" : "APIキーが未設定です" }, "error");
