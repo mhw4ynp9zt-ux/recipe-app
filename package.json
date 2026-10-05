@@ -13,6 +13,7 @@
     "test:dishes": "node test/dishes_test.mjs && node test/multi-field_test.mjs && node test/create-dishes_test.mjs",
     "test:genre": "node test/genre-taxonomy_test.mjs && node test/genre-classify_test.mjs && node test/genre-filter_test.mjs && node test/genre-prompt_test.mjs && node test/genre-create-ui_test.mjs && node test/genre-edit-api_test.mjs && node test/genre-edit-core_test.mjs && node test/genre-edit-ui_test.mjs && node test/genre-saved-ui_test.mjs",
     "test:edit": "node test/recipe-edit-nutrition_test.mjs && node test/recipe-edit-lib_test.mjs && node test/recipe-edit-api_test.mjs && node test/recipe-edit-core_test.mjs && node test/recipe-edit-ui_test.mjs && node test/recipe-edit-env_test.mjs && node test/recipe-edit-contract_test.mjs",
+    "test:manual-import": "node test/manual-extract_test.mjs && node test/manual-extract-api_test.mjs && node test/manual-text_test.mjs && node test/manual-text_browser_test.mjs",
     "test:appliances-ui": "node test/appliances-ui_test.mjs"
   },
   "dependencies": {
