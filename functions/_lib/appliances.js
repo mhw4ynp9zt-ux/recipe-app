@@ -3,7 +3,8 @@
 //   ・parseAppliances … 画面から受け取った一覧の検証・整形
 //   ・loadAppliances / saveAppliances … D1(user_settings テーブルの appliances 列)への読み書き
 //
-// 1台の形: { name, can: [操作id...], policy, note }
+// 1台の形: { name, can: [操作id...], policy, note, spec? }
+//   ・spec は取扱説明書から取り込んだ仕様(任意。空なら項目ごと無い): { capacity, modes: [{name, desc}], ranges, cautions: [文字列] }
 //   ・can にチェックされていない操作は、プロンプトで「できない操作」として伝える(functions/_lib/recipe-prompt.js)
 //   ・policy は、その家電を使うかどうかの方針(下の APPLIANCE_POLICIES)
 //
@@ -11,7 +12,7 @@
 // (長い文章を書き込んでAIの中継として悪用されるのを防ぐ。「使わない食材」・マイキッチンと同じ考え方)。
 // 守られたかどうかはコードでは判定できないため、守られなかったときの自動の作り直しはしません
 // (判定を足すとAIの呼び出しが増え、費用に直結するため。MAX_ATTEMPTS / MAX_AI_CALLS は変わりません)。
-// 注意: APPLIANCE_OPS / APPLIANCE_POLICIES は js/config.js と同じ内容に保ってください(test/appliances_test.mjs が一致を確認します)。
+// 注意: APPLIANCE_OPS / APPLIANCE_POLICIES / APPLIANCE_SPEC_LIMITS は js/config.js と同じ内容に保ってください(test/appliances_test.mjs が一致を確認します)。
 
 export const APPLIANCE_OPS = [
   { id: "stir_fry", label: "炒める" },
@@ -31,6 +32,9 @@ export const APPLIANCE_POLICIES = [
 export const MAX_APPLIANCES = 5;          // 登録できる台数
 export const MAX_APPLIANCE_NAME_LEN = 20; // 名前の最大文字数
 export const MAX_APPLIANCE_NOTE_LEN = 100; // 補足の最大文字数
+// spec の上限(文字数は容量・範囲・各項目、件数はモード・注意点)。js/config.js の同名の定数と同じ内容に保つ
+// 注意: 保存済みデータは厳格に検証して読むので、上限を小さくするときは先に移行が必要
+export const APPLIANCE_SPEC_LIMITS = { capacity: 20, modes: 6, modeName: 16, modeDesc: 30, ranges: 60, cautions: 3, caution: 60 };
 
 const OP_IDS = APPLIANCE_OPS.map((o) => o.id);
 const POLICY_IDS = APPLIANCE_POLICIES.map((p) => p.id);
@@ -46,7 +50,82 @@ function dedupeKey(text) {
   return String(text).normalize("NFKC").toLowerCase().replace(/\s+/g, "");
 }
 
-// 成功: { value: [{ name, can, policy, note }, ...] } / 失敗: { error }
+// spec の検証・整形。成功: { value: Spec | null }(空は null) / 失敗: { error }
+//   Spec = { capacity, modes: [{ name, desc }], ranges, cautions: [文字列] }(4項目とも必ずある)
+// 既定(strict)は上限超過・型違いを error にする(画面からの入力用)。
+// lenient: true は、長すぎる文字列の切り詰め・件数超過の切り捨て・不正な要素の除外を黙って行う(AIの返答・保存済みデータ用)。
+export function parseSpec(input, opts = {}) {
+  const lenient = !!opts.lenient;
+  if (input === undefined || input === null) return { value: null };
+  if (typeof input !== "object" || Array.isArray(input)) return lenient ? { value: null } : { error: "調理家電の仕様の形式が不正です" };
+  const L = APPLIANCE_SPEC_LIMITS;
+
+  // 文字列1つ。strict で型違い・超過なら error 文、lenient なら "" / 切り詰め
+  const text = (v, max, label) => {
+    if (v === undefined || v === null) return { value: "" };
+    if (typeof v !== "string") return lenient ? { value: "" } : { error: `${label}の形式が不正です` };
+    const t = cleanLine(v);
+    if (t.length <= max) return { value: t };
+    return lenient ? { value: t.slice(0, max) } : { error: `${label}は長すぎます(${max}文字まで)` };
+  };
+
+  const capacity = text(input.capacity, L.capacity, "仕様の容量");
+  if (capacity.error) return capacity;
+  const ranges = text(input.ranges, L.ranges, "仕様の範囲・温度");
+  if (ranges.error) return ranges;
+
+  const modes = [];
+  if (input.modes !== undefined && input.modes !== null) {
+    if (!Array.isArray(input.modes)) {
+      if (!lenient) return { error: "仕様のモードの形式が不正です" };
+    } else {
+      for (const m of input.modes) {
+        if (!m || typeof m !== "object" || Array.isArray(m)) {
+          if (lenient) continue;
+          return { error: "仕様のモードの形式が不正です" };
+        }
+        const name = text(m.name, L.modeName, "仕様のモード名");
+        if (name.error) return name;
+        const desc = text(m.desc, L.modeDesc, "仕様のモードの説明");
+        if (desc.error) return desc;
+        if (!name.value) {
+          if (lenient) continue;
+          return { error: "仕様のモード名を入力してください" };
+        }
+        modes.push({ name: name.value, desc: desc.value });
+      }
+      if (modes.length > L.modes) {
+        if (!lenient) return { error: `仕様のモードは${L.modes}件までです` };
+        modes.length = L.modes;
+      }
+    }
+  }
+
+  const cautions = [];
+  if (input.cautions !== undefined && input.cautions !== null) {
+    if (!Array.isArray(input.cautions)) {
+      if (!lenient) return { error: "仕様の注意点の形式が不正です" };
+    } else {
+      for (const c of input.cautions) {
+        const t = text(c, L.caution, "仕様の注意点");
+        if (t.error || (typeof c !== "string" && c !== undefined && c !== null)) {
+          if (lenient) continue;
+          return { error: t.error || "仕様の注意点の形式が不正です" };
+        }
+        if (t.value) cautions.push(t.value);
+      }
+      if (cautions.length > L.cautions) {
+        if (!lenient) return { error: `仕様の注意点は${L.cautions}件までです` };
+        cautions.length = L.cautions;
+      }
+    }
+  }
+
+  if (!capacity.value && !ranges.value && !modes.length && !cautions.length) return { value: null };
+  return { value: { capacity: capacity.value, modes, ranges: ranges.value, cautions } };
+}
+
+// 成功: { value: [{ name, can, policy, note, spec? }, ...] } / 失敗: { error }
 // can は APPLIANCE_OPS の順に並べ直し、重複は除く。policy 省略は "optional"。同じ名前(表記ゆれ含む)は最初の1台だけ残す。
 // 全部消して保存(空配列)もできる。
 export function parseAppliances(input) {
@@ -85,10 +164,13 @@ export function parseAppliances(input) {
       policy = raw.policy;
     }
 
+    const spec = parseSpec(raw.spec);
+    if (spec.error) return spec;
+
     const key = dedupeKey(name);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ name, can, policy, note });
+    out.push(spec.value ? { name, can, policy, note, spec: spec.value } : { name, can, policy, note });
   }
   if (out.length > MAX_APPLIANCES) return { error: `登録できるのは${MAX_APPLIANCES}台までです` };
   return { value: out };
@@ -99,6 +181,7 @@ export function parseAppliances(input) {
 // (保存の方は失敗するので、登録できないことは画面で分かる)
 const isMissingSchema = (e) => /no such (table|column)|no column named/i.test(String((e && e.message) || e));
 
+// 注意: 保存済みデータは厳格に検証して読むので、上限(APPLIANCE_SPEC_LIMITS など)を小さくするときは先に移行が必要
 export async function loadAppliances(env, userId) {
   let row;
   try {
