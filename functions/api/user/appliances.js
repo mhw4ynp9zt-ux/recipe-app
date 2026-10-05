@@ -1,7 +1,7 @@
 // /api/user/appliances(ログイン必須。自分の設定だけ)
 //
-// GET → { appliances: [{ name, can, policy, note }, ...], max: 5, maxNameLength: 20, maxNoteLength: 100 }   登録済みの「使っている調理家電」
-// PUT → body: { appliances: [{ name, can, policy, note }, ...] }                                          一覧をまるごと置き換えて保存し、保存した一覧を返す
+// GET → { appliances: [{ name, can, policy, note, spec? }, ...], max: 5, maxNameLength: 20, maxNoteLength: 100 }   登録済みの「使っている調理家電」
+// PUT → body: { appliances: [{ name, can, policy, note, spec? }, ...] }                                          一覧をまるごと置き換えて保存し、保存した一覧を返す
 //
 // ここはDBを読み書きするだけで、AIは呼びません(=費用は発生しません)。
 // 登録した家電は、レシピ作成の開始時(functions/_lib/recipe-job.js の startJob)に読まれ、AIへの条件に加わります。
