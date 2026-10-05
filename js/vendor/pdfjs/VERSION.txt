@@ -1,0 +1,2 @@
+pdfjs-dist 6.2.108 (legacy build), copied from a local install; replace the files to upgrade
+cmaps/: pdfjs-dist 6.2.108 の cmaps/ をそのまま全ファイル(.bcmap・LICENSE)コピー(日本語PDFの定義済みCMap用。getDocument の cMapUrl で指定)。pdf.js を更新するときは cmaps/ も同じ版に入れ替える
