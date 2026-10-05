@@ -80,6 +80,38 @@
   function recordError(err, extra){
     if(typeof logError === 'function') logError('appliances', err, extra);
   }
+  // 「読み取り機能を読み込めない」原因の調査。manual-text.js が HTML に載っているか・取得できるか・JavaScriptとして実行できたかを調べ、エラーログへ残す
+  async function diagnoseManualText(){
+    const info = { typeofManualText: typeof ManualText };
+    let why = '不明';
+    try {
+      const tag = Array.prototype.find.call(document.scripts || [], s => /manual-text\.js/.test(s.getAttribute('src') || ''));
+      info.scriptTagInHtml = !!tag;
+      if(!tag) why = 'index.html に manual-text.js の script タグがありません';
+      const url = tag ? tag.src : new URL('js/manual-text.js', location.href).href;
+      info.url = url;
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        info.status = res.status;
+        info.contentType = res.headers.get('content-type') || '';
+        const body = await res.text();
+        info.head = body.slice(0, 40).replace(/\s+/g, ' ');
+        const fileState = !res.ok ? 'ファイルを取得できません(HTTP ' + res.status + ')' : /^\s*</.test(body) ? 'ファイルの場所にHTMLが返っています(未配置の可能性)' : 'ファイルは取得できます';
+        if(!tag) why = 'index.html に manual-text.js の script タグがありません(' + fileState + ')';
+        else if(!res.ok) why = 'manual-text.js を取得できません(HTTP ' + res.status + ')';
+        else if(/^\s*</.test(body)) why = 'manual-text.js の場所に HTML が返っています(ファイル未配置の可能性)';
+        else why = 'manual-text.js は取得できたが実行に失敗(ブラウザのコンソール参照)';
+      } catch(e){
+        info.fetchError = String(e && e.message || e);
+        if(tag) why = 'manual-text.js の取得に失敗(通信エラー)';
+      }
+    } catch(e){
+      info.diagnoseError = String(e && e.message || e);
+    }
+    info.why = why;
+    recordError(new Error('ManualText 未読み込み: ' + why), info);
+    return why;
+  }
   function showStatus(msg, isError){
     if(!statusEl) return;
     statusEl.textContent = msg;
@@ -439,7 +471,10 @@
       msg.textContent = '';
       slot.innerHTML = '';
       try {
-        if(typeof ManualText === 'undefined') throw new Error('読み取り機能を読み込めませんでした。ページを再読み込みしてください。');
+        if(typeof ManualText === 'undefined'){
+          const why = await diagnoseManualText(); // 原因をエラーログへ(通信は同じ配信元の静的ファイルの取得のみ。AIは呼ばない)
+          throw new Error('読み取り機能を読み込めませんでした。ページを再読み込みしてください。(原因: ' + why + ')');
+        }
         const r = await ManualText.extractFromFile(f); // 失敗したら /extract は呼ばない
         if(stale()) return;
         const data = await applianceFetch({
@@ -452,6 +487,7 @@
         showPanel(data.proposal);
       } catch(err){
         if(stale()) return;
+        recordError(err, { step: 'manual-extract', code: err && err.code }); // 画面に出した失敗はすべてログへ(本文・PDFは含めない)
         msg.textContent = (err && err.message) || '読み取れませんでした。もう一度お試しください。';
       } finally {
         reading = false;

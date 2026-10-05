@@ -70,6 +70,16 @@
     });
   }
 
+  // 原因調査用: 読み取りが失敗した段階と元のエラーを、エラーログ(logError)へ残す。PDFの中身・本文は記録しない
+  function note(step, e, extra) {
+    try {
+      if (typeof logError !== "function") return;
+      var x = { step: step };
+      if (extra) Object.keys(extra).forEach(function (k) { x[k] = extra[k]; });
+      logError("manual-text", e || step, x);
+    } catch (_) {}
+  }
+
   function pageText(content) {
     var out = "";
     (content.items || []).forEach(function (it) {
@@ -99,14 +109,15 @@
       if (!(b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46)) { // "%PDF"
         throw fail("not_pdf", "PDFファイルではないようです。説明書のPDFを選んでください。");
       }
-      return Promise.all([loadPdfjs().catch(function () { throw readFail(); }), file.arrayBuffer()]);
-    }, function (e) { throw e && e.code ? e : readFail(); }).then(function (r) {
+      return Promise.all([loadPdfjs().catch(function (e) { note("import-pdfjs", e, { url: "/js/vendor/pdfjs/pdf.min.mjs" }); throw readFail(); }), file.arrayBuffer()]);
+    }, function (e) { if (!(e && e.code)) note("read-file", e); throw e && e.code ? e : readFail(); }).then(function (r) {
       var pdfjs = r[0];
       // 日本語PDFで使われる定義済みCMap(UniJIS-UCS2-H など)を同梱の cmaps から読む(同じ配信元・外部通信なし)
       task = pdfjs.getDocument({ data: new Uint8Array(r[1]), cMapUrl: "/js/vendor/pdfjs/cmaps/", cMapPacked: true });
       return task.promise.catch(function (e) {
         if (e && e.name === "PasswordException") throw fail("encrypted", "パスワード付きのPDFは読み取れません。パスワードを外したPDFでお試しください。");
         if (e && e.name === "InvalidPDFException") throw fail("not_pdf", "PDFファイルではないようです。説明書のPDFを選んでください。");
+        note("open-pdf", e, { errName: e && e.name });
         throw readFail();
       });
     }).then(function (d) {
@@ -133,6 +144,7 @@
       }
       return selectRelevantPages(pages, LIMITS.maxChars);
     }).catch(function (e) {
+      if (!(e && e.code)) note("read-pages", e);
       throw e && e.code ? e : readFail();
     }).then(function (res) {
       cleanup();
