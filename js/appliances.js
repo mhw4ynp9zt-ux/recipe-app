@@ -30,6 +30,27 @@
     '#appliances-section .appliances-meta .dirty{color:var(--accent);}' +
     '#appliances-section .appliances-save{display:block; width:100%; margin-top:12px; min-height:48px;}' +
     '#appliances-section .status-line{text-align:left;}' +
+    '#appliances-section .appliance-spec{margin-top:12px;}' +
+    '#appliances-section .appliance-spec summary{display:flex; align-items:center; min-height:44px; font-size:13.5px; font-weight:700; color:var(--ink-soft); cursor:pointer;}' +
+    '#appliances-section .spec-editor{display:flex; flex-direction:column; gap:4px;}' +
+    '#appliances-section .spec-input{display:block; width:100%; box-sizing:border-box; min-height:44px; padding:8px 12px; border:1.5px solid var(--line-strong); border-radius:12px; background:#fff; color:var(--ink); font:inherit; font-size:16px;}' +
+    '#appliances-section .spec-row{display:grid; grid-template-columns:minmax(0,1fr) 44px; align-items:center; gap:6px; margin-bottom:6px;}' +
+    '#appliances-section .spec-row-fields{display:flex; flex-direction:column; gap:6px; min-width:0;}' +
+    '#appliances-section .spec-remove{width:44px; height:44px; padding:0; border:none; border-radius:50%; background:transparent; color:var(--ink-soft); font-size:22px; line-height:1; cursor:pointer;}' +
+    '#appliances-section .spec-add{min-height:44px; min-width:44px; padding:8px 16px; align-self:flex-start;}' +
+    '#appliances-section .spec-add:disabled{opacity:.5;}' +
+    '#appliances-section .appliance-extract{margin-top:12px;}' +
+    '#appliances-section .appliance-extract-btn{min-height:48px; width:100%; padding-left:8px; padding-right:8px;}' +
+    '#appliances-section .appliance-extract-btn:disabled{opacity:.6;}' +
+    '#appliances-section .appliance-extract-notice{margin:6px 0 0; font-size:12.5px; color:var(--ink-soft);}' +
+    '#appliances-section .appliance-extract-warn{margin:4px 0 0; font-size:12.5px; color:var(--ink-soft);}' +
+    '#appliances-section .appliance-extract-msg{margin:8px 0 0; font-size:13.5px; color:var(--protein);}' +
+    '#appliances-section .appliance-extract-msg:empty{display:none;}' +
+    '#appliances-section .appliance-extract-panel{box-sizing:border-box; margin-top:10px; padding:12px; border:1.5px dashed var(--line-strong); border-radius:12px; background:var(--bg-deep);}' +
+    '#appliances-section .appliance-extract-title{margin:0 0 4px; font-size:14px; font-weight:700;}' +
+    '#appliances-section .appliance-extract-proposal-note{margin:8px 0 0; font-size:13.5px; color:var(--ink-soft); overflow-wrap:anywhere;}' +
+    '#appliances-section .appliance-extract-actions{display:flex; gap:8px; margin-top:12px;}' +
+    '#appliances-section .appliance-extract-actions .btn{flex:1 1 0; min-height:48px; padding-left:8px; padding-right:8px;}' +
     '.appliances-note{margin-top:14px;}';
 
   const APPL_HTML =
@@ -52,6 +73,8 @@
   let saved = [];                                                              // サーバーに保存されている内容(未保存の判定用)
   let limits = { max: 5, maxNameLength: 20, maxNoteLength: 100 };              // サーバーの上限(読み込み時に更新)
   let saving = false;                                                          // 保存の通信の最中か
+  let readsInFlight = 0;                                                       // 説明書の読み取り(AI呼び出しを含む)の最中の件数。0より大きい間は保存を受け付けない(カードが作り直され、支払い済みの結果が捨てられるのを防ぐ)
+  let sessionEpoch = 0;                                                        // ログイン状態が変わるたびに進める。読み取り中の応答が、別の人の画面に出ないようにする
   let epoch = 0;                                                               // 通信を始めるたび・ログアウトのたびに進める。古い応答(遅れて届いたもの)は画面に反映しない
 
   function recordError(err, extra){
@@ -68,14 +91,26 @@
   function policyIds(){ return APPLIANCE_POLICIES.map(p => p.id); }
 
   // サーバーや保存済みの1台分を、画面で扱う形に整える(canは正本の順・知らないidは捨てる)
+  // 仕様(spec)を整える。空なら null(=spec は項目ごと無し)。モード名の無いモードと空の注意点は捨てる
+  function normalizeSpec(s){
+    if(!s || typeof s !== 'object' || Array.isArray(s)) return null;
+    const modes = (Array.isArray(s.modes) ? s.modes : []).map(m => ({ name: clean(m && m.name), desc: clean(m && m.desc) })).filter(m => m.name);
+    const cautions = (Array.isArray(s.cautions) ? s.cautions : []).map(clean).filter(Boolean);
+    const out = { capacity: clean(s.capacity), modes: modes, ranges: clean(s.ranges), cautions: cautions };
+    return (!out.capacity && !out.ranges && !modes.length && !cautions.length) ? null : out;
+  }
+
   function normalize(a){
     const can = Array.isArray(a && a.can) ? a.can : [];
-    return {
+    const out = {
       name: clean(a && a.name),
       can: opIds().filter(id => can.indexOf(id) >= 0),
       policy: policyIds().indexOf(a && a.policy) >= 0 ? a.policy : 'optional',
       note: clean(a && a.note),
     };
+    const spec = normalizeSpec(a && a.spec);
+    if(spec) out.spec = spec; // 空なら spec キーは付けない(従来の家電と同じ形)
+    return out;
   }
 
   function cardEls(){ return Array.prototype.slice.call(listEl.querySelectorAll('.appliance-card')); }
@@ -84,10 +119,152 @@
   function currentList(){
     return cardEls().map(card => normalize({
       name: card.querySelector('.appliance-name').value,
-      can: Array.prototype.filter.call(card.querySelectorAll('.appliance-op'), c => c.checked).map(c => c.getAttribute('data-op')),
+      can: card._parts.ops.read(),
       policy: card.querySelector('.appliance-policy').value,
       note: card.querySelector('.appliance-note').value,
+      spec: card._parts.spec.read(),
     }));
+  }
+
+  // 「できる操作」のチェック欄。カードの中と、読み取りの確認欄の両方で使う。read() はチェック済みの id(正本の順)
+  function buildOpsEditor(can, onChange){
+    const ops = document.createElement('div');
+    ops.className = 'appliance-ops';
+    ops.setAttribute('role', 'group');
+    const list = Array.isArray(can) ? can : [];
+    APPLIANCE_OPS.forEach(op => {
+      const label = document.createElement('label');
+      label.className = 'appliance-op-label';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'appliance-op';
+      cb.setAttribute('data-op', op.id);
+      cb.checked = list.indexOf(op.id) >= 0;
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(op.label));
+      ops.appendChild(label);
+      if(onChange) cb.addEventListener('change', onChange);
+    });
+    return {
+      el: ops,
+      read: function(){
+        return Array.prototype.filter.call(ops.querySelectorAll('.appliance-op'), c => c.checked).map(c => c.getAttribute('data-op'));
+      },
+    };
+  }
+
+  // 仕様(容量・モード・範囲・注意点)の編集欄。read() は整えた Spec、すべて空なら null
+  function buildSpecEditor(spec, onChange){
+    const L = APPLIANCE_SPEC_LIMITS;
+    const v = normalizeSpec(spec) || { capacity: '', modes: [], ranges: '', cautions: [] };
+    const root = document.createElement('div');
+    root.className = 'spec-editor';
+    const changed = function(){ if(onChange) onChange(); };
+
+    function label(text){
+      const l = document.createElement('span');
+      l.className = 'appliance-label';
+      l.textContent = text;
+      root.appendChild(l);
+    }
+    function input(cls, value, max, aria, placeholder){
+      const i = document.createElement('input');
+      i.type = 'text';
+      i.className = 'spec-input ' + cls;
+      i.autocomplete = 'off';
+      i.maxLength = max;
+      i.value = value;
+      i.setAttribute('aria-label', aria);
+      if(placeholder) i.placeholder = placeholder;
+      i.addEventListener('input', changed);
+      return i;
+    }
+    function removeBtn(cls, aria, row){
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'spec-remove ' + cls;
+      b.setAttribute('aria-label', aria);
+      b.textContent = '×';
+      b.addEventListener('click', function(){ row.remove(); refresh(); changed(); });
+      return b;
+    }
+
+    label('容量');
+    const capacity = input('spec-capacity', v.capacity, L.capacity, '容量', '例: 2.4L');
+    root.appendChild(capacity);
+
+    label('モード(名前と説明)');
+    const modesEl = document.createElement('div');
+    root.appendChild(modesEl);
+    function addMode(m){
+      const row = document.createElement('div');
+      row.className = 'spec-row spec-mode';
+      const fields = document.createElement('div');
+      fields.className = 'spec-row-fields';
+      fields.appendChild(input('spec-mode-name', m.name, L.modeName, 'モード名', 'モード名'));
+      fields.appendChild(input('spec-mode-desc', m.desc, L.modeDesc, 'モードの説明', '説明(任意)'));
+      row.appendChild(fields);
+      row.appendChild(removeBtn('spec-mode-remove', 'このモードを削除', row));
+      modesEl.appendChild(row);
+    }
+    v.modes.forEach(addMode);
+    const addModeBtn = document.createElement('button');
+    addModeBtn.type = 'button';
+    addModeBtn.className = 'btn btn-secondary spec-add spec-mode-add';
+    addModeBtn.textContent = '+ モードを追加';
+    addModeBtn.addEventListener('click', function(){
+      addMode({ name: '', desc: '' }); refresh(); changed();
+      const names = modesEl.querySelectorAll('.spec-mode-name');
+      names[names.length - 1].focus();
+    });
+    root.appendChild(addModeBtn);
+
+    label('範囲・温度(例: 40〜100度、最大12時間)');
+    const ranges = input('spec-ranges', v.ranges, L.ranges, '範囲・温度');
+    root.appendChild(ranges);
+
+    label('注意点');
+    const cautionsEl = document.createElement('div');
+    root.appendChild(cautionsEl);
+    function addCaution(c){
+      const row = document.createElement('div');
+      row.className = 'spec-row';
+      const fields = document.createElement('div');
+      fields.className = 'spec-row-fields';
+      fields.appendChild(input('spec-caution', c, L.caution, '注意点'));
+      row.appendChild(fields);
+      row.appendChild(removeBtn('spec-caution-remove', 'この注意点を削除', row));
+      cautionsEl.appendChild(row);
+    }
+    v.cautions.forEach(addCaution);
+    const addCautionBtn = document.createElement('button');
+    addCautionBtn.type = 'button';
+    addCautionBtn.className = 'btn btn-secondary spec-add spec-caution-add';
+    addCautionBtn.textContent = '+ 注意点を追加';
+    addCautionBtn.addEventListener('click', function(){
+      addCaution(''); refresh(); changed();
+      const cs = cautionsEl.querySelectorAll('.spec-caution');
+      cs[cs.length - 1].focus();
+    });
+    root.appendChild(addCautionBtn);
+
+    function refresh(){
+      addModeBtn.disabled = modesEl.children.length >= L.modes;
+      addCautionBtn.disabled = cautionsEl.children.length >= L.cautions;
+    }
+    refresh();
+
+    return {
+      el: root,
+      read: function(){
+        return normalizeSpec({
+          capacity: capacity.value,
+          modes: Array.prototype.map.call(modesEl.querySelectorAll('.spec-mode'), r => ({ name: r.querySelector('.spec-mode-name').value, desc: r.querySelector('.spec-mode-desc').value })),
+          ranges: ranges.value,
+          cautions: Array.prototype.map.call(cautionsEl.querySelectorAll('.spec-caution'), i => i.value),
+        });
+      },
+    };
   }
 
   function addCard(a){
@@ -118,23 +295,8 @@
     opsLabel.className = 'appliance-label';
     opsLabel.textContent = 'できる操作(チェックのない操作は「できない」と伝えます)';
     card.appendChild(opsLabel);
-    const ops = document.createElement('div');
-    ops.className = 'appliance-ops';
-    ops.setAttribute('role', 'group');
-    APPLIANCE_OPS.forEach(op => {
-      const label = document.createElement('label');
-      label.className = 'appliance-op-label';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.className = 'appliance-op';
-      cb.setAttribute('data-op', op.id);
-      cb.checked = v.can.indexOf(op.id) >= 0;
-      label.appendChild(cb);
-      label.appendChild(document.createTextNode(op.label));
-      ops.appendChild(label);
-      cb.addEventListener('change', renderMeta);
-    });
-    card.appendChild(ops);
+    const opsEditor = buildOpsEditor(v.can, renderMeta);
+    card.appendChild(opsEditor.el);
 
     const polLabel = document.createElement('span');
     polLabel.className = 'appliance-label';
@@ -163,12 +325,140 @@
     note.value = v.note;
     card.appendChild(note);
 
+    // 仕様(任意)の編集欄(折りたたみ)
+    const details = document.createElement('details');
+    details.className = 'appliance-spec';
+    const summary = document.createElement('summary');
+    summary.textContent = '仕様(任意)';
+    details.appendChild(summary);
+    const specEditor = buildSpecEditor(v.spec || null, renderMeta);
+    details.appendChild(specEditor.el);
+    card.appendChild(details);
+    card._parts = { ops: opsEditor, spec: specEditor };
+
+    // 説明書PDFから読み取る(ログイン中だけ)
+    if(typeof isLoggedIn === 'function' && isLoggedIn()) addExtract(card, name, note);
+
     name.addEventListener('input', renderMeta);
     pol.addEventListener('change', renderMeta);
     note.addEventListener('input', renderMeta);
     rm.addEventListener('click', function(){ card.remove(); renderMeta(); });
     listEl.appendChild(card);
     return card;
+  }
+
+  // 説明書PDFの読み取り(カード内)。PDFはこの端末で文字にし、文字だけを /extract に送る。反映しただけでは保存しない
+  const EXTRACT_LABEL = '説明書PDFから読み取る';
+  function addExtract(card, nameEl, noteEl){
+    const wrap = document.createElement('div');
+    wrap.className = 'appliance-extract';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-secondary appliance-extract-btn';
+    btn.textContent = EXTRACT_LABEL;
+    const file = document.createElement('input');
+    file.type = 'file';
+    file.accept = 'application/pdf';
+    file.hidden = true;
+    const notice = document.createElement('p');
+    notice.className = 'appliance-extract-notice';
+    notice.textContent = '説明書の内容はAIに送信されます。PDFそのものは保存されません。1日3回まで';
+    const warn = document.createElement('p');
+    warn.className = 'appliance-extract-warn';
+    warn.textContent = '読み取り中はこの画面を閉じないでください';
+    const msg = document.createElement('p');
+    msg.className = 'appliance-extract-msg';
+    msg.setAttribute('role', 'status');
+    const slot = document.createElement('div');
+    wrap.appendChild(btn); wrap.appendChild(file); wrap.appendChild(notice); wrap.appendChild(warn); wrap.appendChild(msg); wrap.appendChild(slot);
+    card.appendChild(wrap);
+
+    let reading = false; // 読み取りの最中か(二重押しでも通信は1回)
+    btn.addEventListener('click', function(){ if(!reading) file.click(); });
+
+    function showPanel(proposal){
+      slot.innerHTML = '';
+      const panel = document.createElement('div');
+      panel.className = 'appliance-extract-panel';
+      const title = document.createElement('p');
+      title.className = 'appliance-extract-title';
+      title.textContent = '読み取った内容(確認・修正してください)';
+      panel.appendChild(title);
+      const l1 = document.createElement('span');
+      l1.className = 'appliance-label';
+      l1.textContent = 'できる操作';
+      panel.appendChild(l1);
+      const ops = buildOpsEditor(proposal.can);
+      panel.appendChild(ops.el);
+      const spec = buildSpecEditor(proposal.spec);
+      panel.appendChild(spec.el);
+      const pnote = clean(proposal.note);
+      if(pnote){
+        const n = document.createElement('p');
+        n.className = 'appliance-extract-proposal-note';
+        n.textContent = '補足の候補: ' + pnote;
+        panel.appendChild(n);
+      }
+      const actions = document.createElement('div');
+      actions.className = 'appliance-extract-actions';
+      const apply = document.createElement('button');
+      apply.type = 'button';
+      apply.className = 'btn appliance-extract-apply';
+      apply.textContent = 'この内容を反映';
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'btn btn-secondary appliance-extract-cancel';
+      cancel.textContent = 'やめる';
+      actions.appendChild(apply); actions.appendChild(cancel);
+      panel.appendChild(actions);
+      apply.addEventListener('click', function(){
+        const o = buildOpsEditor(ops.read(), renderMeta);
+        card._parts.ops.el.replaceWith(o.el);
+        card._parts.ops = o;
+        const sp = buildSpecEditor(spec.read(), renderMeta);
+        card._parts.spec.el.replaceWith(sp.el);
+        card._parts.spec = sp;
+        if(pnote && !clean(noteEl.value)) noteEl.value = pnote; // 補足は、空のときだけ入れる
+        slot.innerHTML = '';
+        renderMeta(); // 保存はしない(「保存」ボタンのみ)
+      });
+      cancel.addEventListener('click', function(){ slot.innerHTML = ''; });
+      slot.appendChild(panel);
+    }
+
+    file.addEventListener('change', async function(){
+      const f = file.files && file.files[0];
+      file.value = ''; // 同じファイルをもう一度選べるように
+      if(!f || reading) return;
+      reading = true;
+      const mine = sessionEpoch;
+      readsInFlight++;
+      const stale = () => mine !== sessionEpoch || !card.isConnected; // ログアウト・別のログイン・カードの削除/作り直しのあとの応答は出さない
+      btn.disabled = true;
+      btn.textContent = '読み取り中…';
+      msg.textContent = '';
+      slot.innerHTML = '';
+      try {
+        if(typeof ManualText === 'undefined') throw new Error('読み取り機能を読み込めませんでした。ページを再読み込みしてください。');
+        const r = await ManualText.extractFromFile(f); // 失敗したら /extract は呼ばない
+        if(stale()) return;
+        const data = await applianceFetch({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: clean(nameEl.value) || '調理家電', text: r.text }),
+        }, APPL_URL + '/extract');
+        if(stale()) return;
+        if(!data.proposal || typeof data.proposal !== 'object') throw new Error('読み取り結果を受け取れませんでした。もう一度お試しください。');
+        showPanel(data.proposal);
+      } catch(err){
+        if(stale()) return;
+        msg.textContent = (err && err.message) || '読み取れませんでした。もう一度お試しください。';
+      } finally {
+        reading = false;
+        if(mine === sessionEpoch && readsInFlight > 0) readsInFlight--; // ログイン状態が変わったときは onAppliancesAuthChanged が 0 に戻している
+        if(!stale()){ btn.disabled = false; btn.textContent = EXTRACT_LABEL; }
+      }
+    });
   }
 
   function renderCards(list){
@@ -199,11 +489,11 @@
     saveBtn.disabled = saving;
   }
 
-  async function applianceFetch(options){
+  async function applianceFetch(options, url){
     const method = (options && options.method) || 'GET';
     let res;
     try {
-      res = await fetch(APPL_URL, options);
+      res = await fetch(url || APPL_URL, options);
     } catch(e){
       recordError(e, { method: method });
       throw new Error('通信に失敗しました。電波の良い場所でもう一度お試しください。');
@@ -245,6 +535,7 @@
 
   async function save(){
     if(saving) return;
+    if(readsInFlight > 0){ showStatus('読み取りが終わるまでお待ちください', true); return; } // 保存すると画面が作り直され、読み取り結果が出せなくなる
     const list = currentList();
     // 通信する前に、画面でも確認する(サーバーも同じ確認をする)
     if(list.length > limits.max){ showStatus('登録できるのは' + limits.max + '台までです。', true); return; }
@@ -344,6 +635,8 @@
   window.onAppliancesAuthChanged = function(){
     if(!sectionEl) return;
     const loggedIn = isLoggedIn();
+    sessionEpoch++;
+    readsInFlight = 0; // 古い読み取りの応答は sessionEpoch で捨てられる
     sectionEl.hidden = !loggedIn;
     if(loggedIn){
       load();

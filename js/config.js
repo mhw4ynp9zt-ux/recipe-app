@@ -56,6 +56,9 @@ const APPLIANCE_POLICIES = [
   { id: 'always',   label: 'この家電で作れる料理は必ずこれで作る' },
 ];
 
+// 取扱説明書から取り込む仕様(spec)の上限。functions/_lib/appliances.js の APPLIANCE_SPEC_LIMITS と同じ内容に保つ。
+const APPLIANCE_SPEC_LIMITS = { capacity: 20, modes: 6, modeName: 16, modeDesc: 30, ranges: 60, cautions: 3, caution: 60 };
+
 // 「ひな形から追加」の初期値。あくまで目安(画面にもそう表示し、ユーザーが確認・修正する)。
 // 方針: メーカー公式の情報で確認できた操作だけをチェックし、確認できないものはチェックしない(=AIには「できない」と伝わる)。
 // 出典・確認状況は claude/APPLIANCES.md に記録。
