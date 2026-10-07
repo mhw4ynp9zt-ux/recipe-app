@@ -1,7 +1,8 @@
 // /api/user/appliances(ログイン必須。自分の設定だけ)
 //
 // GET → { appliances: [{ name, can, policy, note, spec? }, ...], max: 5, maxNameLength: 20, maxNoteLength: 100 }   登録済みの「使っている調理家電」
-// PUT → body: { appliances: [{ name, can, policy, note, spec? }, ...] }                                          一覧をまるごと置き換えて保存し、保存した一覧を返す
+// PUT → body: { appliances: [{ name, can, policy, note, spec }, ...] }                                          一覧をまるごと置き換えて保存し、保存した一覧を返す
+//       調理家電は「説明書PDFからの読み取り」でのみ登録できるため、説明書の内容(spec)が無い家電は 400 で拒否する(requireSpec)。
 //
 // ここはDBを読み書きするだけで、AIは呼びません(=費用は発生しません)。
 // 登録した家電は、レシピ作成の開始時(functions/_lib/recipe-job.js の startJob)に読まれ、AIへの条件に加わります。
@@ -34,7 +35,8 @@ export async function onRequestPut({ request, env }) {
   try { body = await request.json(); } catch (e) { /* 読めなければ null のまま */ }
   if (!body || typeof body !== "object") return json({ error: "リクエストが不正です" }, { status: 400, headers: NO_STORE });
 
-  const parsed = parseAppliances(body.appliances);
+  // 説明書の内容(spec)が無い家電は保存できない(手入力だけの登録を防ぐ)
+  const parsed = parseAppliances(body.appliances, { requireSpec: true });
   if (parsed.error) return json({ error: parsed.error }, { status: 400, headers: NO_STORE });
 
   try {
