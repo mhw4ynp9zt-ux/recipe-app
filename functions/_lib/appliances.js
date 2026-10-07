@@ -4,9 +4,13 @@
 //   ・loadAppliances / saveAppliances … D1(user_settings テーブルの appliances 列)への読み書き
 //
 // 1台の形: { name, can: [操作id...], policy, note, spec? }
-//   ・spec は取扱説明書から取り込んだ仕様(任意。空なら項目ごと無い): { capacity, modes: [{name, desc}], ranges, cautions: [文字列] }
+//   ・spec は取扱説明書から取り込んだ仕様(空なら項目ごと無い): { capacity, modes: [{name, desc}], ranges, cautions: [文字列] }
 //   ・can にチェックされていない操作は、プロンプトで「できない操作」として伝える(functions/_lib/recipe-prompt.js)
 //   ・policy は、その家電を使うかどうかの方針(下の APPLIANCE_POLICIES)
+//
+// 【説明書PDFからのみ登録】画面からの保存(PUT)は parseAppliances(..., { requireSpec: true }) で検証し、
+// 説明書から読み取った内容(spec)が無い家電は保存できません。一方、保存済みデータの読み込み(loadAppliances)は
+// requireSpec なしのまま(spec の無い古い登録が1台あっても、ほかの登録まで消えないようにするため)。
 //
 // 注意: 自由に書ける文字列(名前・補足)がAIへのプロンプトに入るため、台数と長さを制限しています
 // (長い文章を書き込んでAIの中継として悪用されるのを防ぐ。「使わない食材」・マイキッチンと同じ考え方)。
@@ -35,6 +39,8 @@ export const MAX_APPLIANCE_NOTE_LEN = 100; // 補足の最大文字数
 // spec の上限(文字数は容量・範囲・各項目、件数はモード・注意点)。js/config.js の同名の定数と同じ内容に保つ
 // 注意: 保存済みデータは厳格に検証して読むので、上限を小さくするときは先に移行が必要
 export const APPLIANCE_SPEC_LIMITS = { capacity: 20, modes: 6, modeName: 16, modeDesc: 30, ranges: 60, cautions: 3, caution: 60 };
+// 説明書の内容(spec)が無い家電を保存しようとしたときの案内(画面側 js/appliances.js も同じ趣旨の文を出す)
+export const SPEC_REQUIRED_ERROR = "説明書から読み取った内容がありません。説明書PDFから追加してください";
 
 const OP_IDS = APPLIANCE_OPS.map((o) => o.id);
 const POLICY_IDS = APPLIANCE_POLICIES.map((p) => p.id);
@@ -128,7 +134,9 @@ export function parseSpec(input, opts = {}) {
 // 成功: { value: [{ name, can, policy, note, spec? }, ...] } / 失敗: { error }
 // can は APPLIANCE_OPS の順に並べ直し、重複は除く。policy 省略は "optional"。同じ名前(表記ゆれ含む)は最初の1台だけ残す。
 // 全部消して保存(空配列)もできる。
-export function parseAppliances(input) {
+// opts.requireSpec: true のとき、説明書から読み取った内容(spec)が無い家電はエラー(画面からの保存用)。既定は false(保存済みデータの読み込み用)。
+export function parseAppliances(input, opts = {}) {
+  const requireSpec = !!opts.requireSpec;
   if (!Array.isArray(input)) return { error: SHAPE_ERROR };
   const seen = new Set();
   const out = [];
@@ -166,6 +174,7 @@ export function parseAppliances(input) {
 
     const spec = parseSpec(raw.spec);
     if (spec.error) return spec;
+    if (requireSpec && !spec.value) return { error: `「${name.slice(0, 8)}${name.length > 8 ? "…" : ""}」は${SPEC_REQUIRED_ERROR}` };
 
     const key = dedupeKey(name);
     if (seen.has(key)) continue;
