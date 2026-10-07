@@ -3,20 +3,88 @@
 // この処理ではAIを呼びません(=費用は発生しません)。pdf.js は呼ばれたときに初めて読み込みます(ページ表示時には読み込みません)。
 //
 //   ManualText.extractFromFile(file) -> { text, pagesUsed, truncated }
-//     失敗は Error で、err.code は too_large | too_many_pages | not_pdf | encrypted | no_text | read_failed
+//     失敗は Error で、err.code は too_large | too_many_pages | not_pdf | encrypted | no_text | garbled | read_failed
 //     (err.message は画面にそのまま出せる日本語の案内)。サイズとPDFの先頭(%PDF)の確認は、pdf.js を読み込む前に行います。
 //   ManualText.selectRelevantPages(pages, maxChars) -> { text, pagesUsed(1始まり), truncated }
+//   ManualText.ensureReadableStreamAsyncIterator(RS?) -> boolean(補いを足したら true)
+//   ManualText.readableTextRatio(text) -> 0〜1(日本語・英数字・基本記号の割合。文字化けの検知用)
 //
 // ブラウザでも Node(テストの vm)でも読めるよう、globalThis に ManualText を付けます。
 (function () {
   var LIMITS = { maxBytes: 20 * 1024 * 1024, maxPages: 200, maxChars: 30000, minChars: 200 };
   var MANUAL_KEYWORDS = ["モード", "メニュー", "調理", "容量", "温度", "時間", "仕様", "使用上の注意", "最大", "加熱", "圧力", "低温", "自動"];
   var PAGE_SEP = "\n\n";
+  // 読める文字の割合がこれ未満なら、文字化けとみなしてAIを呼ばない(正常な日本語PDFは1.0付近、文字化けは0付近。test/manual-text_test.mjs で確認)
+  var MIN_READABLE_RATIO = 0.7;
+  var HAND_INPUT_HINT = "うまくいかない場合は、「仕様(任意)」の欄に説明書の内容を手で入力できます。";
 
   function fail(code, message) {
     var e = new Error(message);
     e.code = code;
     return e;
+  }
+
+  // ---- Safari 対策: ReadableStream の for await を使えるようにする ----
+  // pdf.js(getTextContent など)は ReadableStream を `for await (const x of stream)` で読むが、
+  // Safari には ReadableStream.prototype[Symbol.asyncIterator] が無く、TypeError("undefined is not a function") になる。
+  // 無い環境でだけ、getReader() ベースの実装を足す(Chromium・Node など、既にある環境では何もしない)。pdf.js のファイルは改変しない。
+  function ensureReadableStreamAsyncIterator(RS) {
+    var C = RS || (typeof ReadableStream !== "undefined" ? ReadableStream : undefined);
+    if (!C || !C.prototype || typeof Symbol === "undefined" || !Symbol.asyncIterator) return false;
+    if (C.prototype[Symbol.asyncIterator]) return false;
+    Object.defineProperty(C.prototype, Symbol.asyncIterator, {
+      configurable: true,
+      writable: true,
+      value: function () {
+        var reader = this.getReader();
+        var finished = false;
+        var release = function () { try { reader.releaseLock(); } catch (_) {} };
+        var it = {
+          next: function () {
+            if (finished) return Promise.resolve({ done: true, value: undefined });
+            return reader.read().then(function (r) {
+              if (r.done) { finished = true; release(); return { done: true, value: undefined }; }
+              return { done: false, value: r.value };
+            }, function (e) { finished = true; release(); throw e; });
+          },
+          // for await を途中で抜けたとき(break / throw)に呼ばれる: ストリームを閉じて、ロックを外す
+          return: function (value) {
+            if (finished) return Promise.resolve({ done: true, value: value });
+            finished = true;
+            return reader.cancel().then(function () { release(); return { done: true, value: value }; },
+              function (e) { release(); throw e; });
+          },
+        };
+        it[Symbol.asyncIterator] = function () { return this; };
+        return it;
+      },
+    });
+    return true;
+  }
+
+  // 文字化けの検知: 空白を除いた文字のうち、ひらがな・カタカナ・漢字・英数字・基本の記号が占める割合
+  function isReadableCode(c) {
+    return (c >= 0x21 && c <= 0x7e) ||                        // ASCII(英数字・記号)
+      c === 0xb0 || c === 0xb1 || c === 0xd7 || c === 0xf7 ||  // ° ± × ÷
+      (c >= 0x2010 && c <= 0x2027) || (c >= 0x2030 && c <= 0x2033) || // 各種ダッシュ・引用符・点・‰ ′ ″
+      c === 0x2103 || c === 0x2212 ||                          // ℃ −
+      (c >= 0x2190 && c <= 0x2199) ||                          // 矢印
+      (c >= 0x25a0 && c <= 0x25ef) ||                          // ■□▲△●○ など
+      (c >= 0x2460 && c <= 0x2473) ||                          // ①〜⑳
+      (c >= 0x3000 && c <= 0x30ff) ||                          // 和文の記号・ひらがな・カタカナ(・ー を含む)
+      (c >= 0x3400 && c <= 0x4dbf) || (c >= 0x4e00 && c <= 0x9fff) || (c >= 0xf900 && c <= 0xfaff) || // 漢字
+      (c >= 0xff01 && c <= 0xff9f);                            // 全角の英数字・記号・半角カナ
+  }
+  function readableTextRatio(text) {
+    var total = 0, good = 0;
+    var s = String(text == null ? "" : text);
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if (c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d || c === 0x3000 || c === 0xa0) continue; // 空白は数えない
+      total++;
+      if (isReadableCode(c) || (c >= 0xd800 && c <= 0xdfff)) good++; // サロゲート(𠮟など)は漢字とみなす
+    }
+    return total ? good / total : 0;
   }
 
   function countKeywords(text) {
@@ -63,21 +131,13 @@
   }
 
   // 既定: 同梱の pdf.js を、呼ばれたときだけ読み込む(外部CDNは使わない)
+  // pdf.js を読み込む「前」に、Safari 向けの補いを足す(pdf.js 本体は改変しない)
   function defaultLoadPdfjs() {
+    ensureReadableStreamAsyncIterator();
     return import("/js/vendor/pdfjs/pdf.min.mjs").then(function (m) {
       m.GlobalWorkerOptions.workerSrc = "/js/vendor/pdfjs/pdf.worker.min.mjs";
       return m;
     });
-  }
-
-  // 原因調査用: 読み取りが失敗した段階と元のエラーを、エラーログ(logError)へ残す。PDFの中身・本文は記録しない
-  function note(step, e, extra) {
-    try {
-      if (typeof logError !== "function") return;
-      var x = { step: step };
-      if (extra) Object.keys(extra).forEach(function (k) { x[k] = extra[k]; });
-      logError("manual-text", e || step, x);
-    } catch (_) {}
   }
 
   function pageText(content) {
@@ -92,7 +152,7 @@
 
   function extractFromFile(file, opts) {
     var loadPdfjs = (opts && opts.loadPdfjs) || defaultLoadPdfjs;
-    var readFail = function () { return fail("read_failed", "PDFを読み取れませんでした。ファイルが壊れていないか確認して、もう一度お試しください。"); };
+    var readFail = function () { return fail("read_failed", "PDFを読み取れませんでした。ファイルが壊れていないか確認して、もう一度お試しください。" + HAND_INPUT_HINT); };
 
     if (!file || typeof file.size !== "number") return Promise.reject(readFail());
     if (file.size > LIMITS.maxBytes) {
@@ -109,15 +169,14 @@
       if (!(b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46)) { // "%PDF"
         throw fail("not_pdf", "PDFファイルではないようです。説明書のPDFを選んでください。");
       }
-      return Promise.all([loadPdfjs().catch(function (e) { note("import-pdfjs", e, { url: "/js/vendor/pdfjs/pdf.min.mjs" }); throw readFail(); }), file.arrayBuffer()]);
-    }, function (e) { if (!(e && e.code)) note("read-file", e); throw e && e.code ? e : readFail(); }).then(function (r) {
+      return Promise.all([loadPdfjs().catch(function () { throw readFail(); }), file.arrayBuffer()]);
+    }, function (e) { throw e && e.code ? e : readFail(); }).then(function (r) {
       var pdfjs = r[0];
       // 日本語PDFで使われる定義済みCMap(UniJIS-UCS2-H など)を同梱の cmaps から読む(同じ配信元・外部通信なし)
       task = pdfjs.getDocument({ data: new Uint8Array(r[1]), cMapUrl: "/js/vendor/pdfjs/cmaps/", cMapPacked: true });
       return task.promise.catch(function (e) {
         if (e && e.name === "PasswordException") throw fail("encrypted", "パスワード付きのPDFは読み取れません。パスワードを外したPDFでお試しください。");
         if (e && e.name === "InvalidPDFException") throw fail("not_pdf", "PDFファイルではないようです。説明書のPDFを選んでください。");
-        note("open-pdf", e, { errName: e && e.name });
         throw readFail();
       });
     }).then(function (d) {
@@ -140,11 +199,14 @@
     }).then(function (pages) {
       var all = pages.join("").replace(/\s+/g, "");
       if (all.length < LIMITS.minChars) {
-        throw fail("no_text", "このPDFから文字を取り出せませんでした(スキャン画像のPDFの可能性があります)。文字を選択できるPDFでお試しください。");
+        throw fail("no_text", "このPDFから文字を取り出せませんでした(スキャン画像のPDFの可能性があります)。文字を選択できるPDFでお試しください。" + HAND_INPUT_HINT);
+      }
+      // 文字は取り出せたが、読める文字がほとんど無い(フォントの対応表が無いPDFなどの文字化け)。AIには送らない
+      if (readableTextRatio(all) < MIN_READABLE_RATIO) {
+        throw fail("garbled", "このPDFは文字を正しく取り出せませんでした。説明書の内容を手で入力してください(「仕様(任意)」の欄に入力できます)。");
       }
       return selectRelevantPages(pages, LIMITS.maxChars);
     }).catch(function (e) {
-      if (!(e && e.code)) note("read-pages", e);
       throw e && e.code ? e : readFail();
     }).then(function (res) {
       cleanup();
@@ -155,5 +217,9 @@
     });
   }
 
-  globalThis.ManualText = { LIMITS: LIMITS, MANUAL_KEYWORDS: MANUAL_KEYWORDS, selectRelevantPages: selectRelevantPages, extractFromFile: extractFromFile };
+  globalThis.ManualText = {
+    LIMITS: LIMITS, MANUAL_KEYWORDS: MANUAL_KEYWORDS, MIN_READABLE_RATIO: MIN_READABLE_RATIO,
+    selectRelevantPages: selectRelevantPages, extractFromFile: extractFromFile,
+    ensureReadableStreamAsyncIterator: ensureReadableStreamAsyncIterator, readableTextRatio: readableTextRatio,
+  };
 })();
