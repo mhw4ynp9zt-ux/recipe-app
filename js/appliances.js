@@ -1,37 +1,49 @@
 // 設定タブの「使っている調理家電」欄。js/settings.js の「マイキッチン」と同じ作りです。
-// 家電ごとに「できる操作」(チェック)・「使い方の方針」・補足を登録します。保存は「保存」ボタンのみ(自動保存はしません)。
-// ※この欄は AI を呼びません。保存・読み込みは /api/user/appliances(DB の読み書きだけ)を使います。
+// 【説明書PDFからのみ登録】家電は「説明書PDFから追加」でだけ増やせます(手入力・ひな形からの追加はありません)。
+//   読み取った内容は、見返しやすい「情報の一覧」(できること・できないこと・容量・モード・範囲・注意点・補足)で表示し、
+//   「編集」で名前・できる操作・仕様・補足を直せます。保存は「保存」ボタンのみ(自動保存はしません)。
+// ※読み取り(/api/user/appliances/extract)だけがAI(有料)を呼びます。1回の読み取りでAIは1回・1日3回まで(サーバー側で制限)。
+//   画面側でも、読み取り中は次の読み取りを受け付けません(同時に1件だけ)。保存・表示のAPIはDBの読み書きだけでAIは呼びません。
 // ※作れなかったときは、この機能だけ使わず、ほかの機能は止めません。
-// ※「できる操作」「方針」の選択肢は js/config.js の APPLIANCE_OPS / APPLIANCE_POLICIES、ひな形は APPLIANCE_PRESETS。
+// ※「できる操作」の選択肢は js/config.js の APPLIANCE_OPS、仕様の上限は APPLIANCE_SPEC_LIMITS。
 (function(){
   const APPL_URL = '/api/user/appliances';
+  const EXTRACT_URL = APPL_URL + '/extract';
+  const ADD_LABEL = '説明書PDFから追加';
+  const REREAD_LABEL = 'PDFで読み直す';
+  const READING_LABEL = '読み取り中…';
+  const NOT_READ = '読み取れませんでした';
 
   const APPL_CSS =
     '#appliances-section{margin-top:16px;}' +
     '#appliances-section .appliance-list{display:flex; flex-direction:column; gap:12px; margin:0;}' +
     '#appliances-section .appliance-card{position:relative; box-sizing:border-box; padding:12px 12px 14px; border:1.5px solid var(--line-strong); border-radius:14px; background:#fff;}' +
     '#appliances-section .appliance-head{display:flex; align-items:center; gap:8px;}' +
+    '#appliances-section .appliance-title{flex:1 1 auto; min-width:0; margin:0; font-size:16px; font-weight:700; line-height:1.4; overflow-wrap:anywhere;}' +
     '#appliances-section .appliance-name{flex:1 1 auto; min-width:0; box-sizing:border-box; min-height:44px; padding:8px 12px; border:1.5px solid var(--line-strong); border-radius:12px; background:#fff; color:var(--ink); font:inherit; font-size:16px; font-weight:700;}' +
     '#appliances-section .appliance-remove{flex:0 0 auto; width:44px; height:44px; padding:0; border:none; border-radius:50%; background:transparent; color:var(--ink-soft); font-size:22px; line-height:1; cursor:pointer;}' +
+    '#appliances-section .appliance-banner{margin:8px 0 0; padding:8px 12px; border-radius:10px; background:var(--accent-soft); color:var(--ink); font-size:13px; line-height:1.5;}' +
+    '#appliances-section .appliance-info{margin:10px 0 0; padding:0;}' +
+    '#appliances-section .appliance-info-row{padding:8px 0; border-top:1px solid var(--line-strong);}' +
+    '#appliances-section .appliance-info-row:first-child{border-top:none;}' +
+    '#appliances-section .appliance-info dt{margin:0 0 2px; font-size:12.5px; font-weight:700; color:var(--ink-soft);}' +
+    '#appliances-section .appliance-info dd{margin:0; font-size:15px; line-height:1.55; color:var(--ink); overflow-wrap:anywhere;}' +
+    '#appliances-section .appliance-info dd.is-empty{color:var(--ink-faint); font-size:13.5px;}' +
+    '#appliances-section .appliance-info ul{margin:0; padding:0; list-style:none;}' +
+    '#appliances-section .appliance-info li{margin:0; padding:1px 0;}' +
+    '#appliances-section .appliance-info li + li{margin-top:2px;}' +
+    '#appliances-section .appliance-info .info-sub{color:var(--ink-soft); font-size:13.5px;}' +
+    '#appliances-section .appliance-actions{display:flex; flex-wrap:wrap; gap:8px; margin-top:12px;}' +
+    '#appliances-section .appliance-actions .btn{flex:1 1 0; min-height:48px; padding-left:8px; padding-right:8px;}' +
+    '#appliances-section .appliance-actions .btn:disabled{opacity:.5;}' +
+    '#appliances-section .appliance-msg{margin:8px 0 0; font-size:13.5px; color:var(--protein);}' +
+    '#appliances-section .appliance-msg:empty{display:none;}' +
+    '#appliances-section .appliance-msg.is-ok{color:var(--veg);}' +
     '#appliances-section .appliance-label{display:block; margin:12px 0 4px; font-size:12.5px; font-weight:700; color:var(--ink-soft);}' +
     '#appliances-section .appliance-ops{display:flex; flex-wrap:wrap; gap:6px;}' +
     '#appliances-section .appliance-op-label{display:inline-flex; align-items:center; gap:6px; min-height:36px; padding:4px 12px 4px 8px; border:1.5px solid var(--line-strong); border-radius:100px; background:#fff; color:var(--ink); font-size:14px; cursor:pointer;}' +
     '#appliances-section .appliance-op{width:20px; height:20px; margin:0; accent-color:var(--brand);}' +
-    '#appliances-section .appliance-policy{display:block; width:100%; box-sizing:border-box; min-height:44px; padding:8px 12px; border:1.5px solid var(--line-strong); border-radius:12px; background:#fff; color:var(--ink); font:inherit; font-size:16px;}' +
     '#appliances-section .appliance-note{display:block; width:100%; box-sizing:border-box; min-height:48px; padding:10px 12px; border:1.5px solid var(--line-strong); border-radius:12px; background:#fff; color:var(--ink); font:inherit; font-size:16px; line-height:1.5; resize:vertical;}' +
-    '#appliances-section .appliance-add-row{display:flex; gap:8px; margin-top:12px;}' +
-    '#appliances-section .appliance-add-row .btn{flex:1 1 0; min-height:48px; padding-left:8px; padding-right:8px;}' +
-    '#appliances-section .appliance-add-row .btn:disabled{opacity:.5;}' +
-    '#appliances-section .appliance-preset-list{display:flex; flex-direction:column; gap:8px; margin-top:10px;}' +
-    '#appliances-section .appliance-preset-list[hidden]{display:none;}' +
-    '#appliances-section .appliance-preset-btn{min-height:48px; text-align:left; padding:8px 16px;}' +
-    '#appliances-section .appliance-empty{margin:0; color:var(--ink-faint); font-size:13.5px;}' +
-    '#appliances-section .appliances-meta{margin:12px 0 0; font-weight:500; color:var(--ink-soft); font-size:12.5px;}' +
-    '#appliances-section .appliances-meta .dirty{color:var(--accent);}' +
-    '#appliances-section .appliances-save{display:block; width:100%; margin-top:12px; min-height:48px;}' +
-    '#appliances-section .status-line{text-align:left;}' +
-    '#appliances-section .appliance-spec{margin-top:12px;}' +
-    '#appliances-section .appliance-spec summary{display:flex; align-items:center; min-height:44px; font-size:13.5px; font-weight:700; color:var(--ink-soft); cursor:pointer;}' +
     '#appliances-section .spec-editor{display:flex; flex-direction:column; gap:4px;}' +
     '#appliances-section .spec-input{display:block; width:100%; box-sizing:border-box; min-height:44px; padding:8px 12px; border:1.5px solid var(--line-strong); border-radius:12px; background:#fff; color:var(--ink); font:inherit; font-size:16px;}' +
     '#appliances-section .spec-row{display:grid; grid-template-columns:minmax(0,1fr) 44px; align-items:center; gap:6px; margin-bottom:6px;}' +
@@ -39,78 +51,49 @@
     '#appliances-section .spec-remove{width:44px; height:44px; padding:0; border:none; border-radius:50%; background:transparent; color:var(--ink-soft); font-size:22px; line-height:1; cursor:pointer;}' +
     '#appliances-section .spec-add{min-height:44px; min-width:44px; padding:8px 16px; align-self:flex-start;}' +
     '#appliances-section .spec-add:disabled{opacity:.5;}' +
-    '#appliances-section .appliance-extract{margin-top:12px;}' +
-    '#appliances-section .appliance-extract-btn{min-height:48px; width:100%; padding-left:8px; padding-right:8px;}' +
-    '#appliances-section .appliance-extract-btn:disabled{opacity:.6;}' +
+    '#appliances-section .appliance-empty{margin:0; color:var(--ink-faint); font-size:13.5px;}' +
+    '#appliances-section .appliance-add{margin-top:12px;}' +
+    '#appliances-section .appliance-add-btn{display:block; width:100%; min-height:48px; padding-left:8px; padding-right:8px;}' +
+    '#appliances-section .appliance-add-btn:disabled{opacity:.5;}' +
     '#appliances-section .appliance-extract-notice{margin:6px 0 0; font-size:12.5px; color:var(--ink-soft);}' +
     '#appliances-section .appliance-extract-warn{margin:4px 0 0; font-size:12.5px; color:var(--ink-soft);}' +
-    '#appliances-section .appliance-extract-msg{margin:8px 0 0; font-size:13.5px; color:var(--protein);}' +
-    '#appliances-section .appliance-extract-msg:empty{display:none;}' +
-    '#appliances-section .appliance-extract-panel{box-sizing:border-box; margin-top:10px; padding:12px; border:1.5px dashed var(--line-strong); border-radius:12px; background:var(--bg-deep);}' +
-    '#appliances-section .appliance-extract-title{margin:0 0 4px; font-size:14px; font-weight:700;}' +
-    '#appliances-section .appliance-extract-proposal-note{margin:8px 0 0; font-size:13.5px; color:var(--ink-soft); overflow-wrap:anywhere;}' +
-    '#appliances-section .appliance-extract-actions{display:flex; gap:8px; margin-top:12px;}' +
-    '#appliances-section .appliance-extract-actions .btn{flex:1 1 0; min-height:48px; padding-left:8px; padding-right:8px;}' +
+    '#appliances-section .appliances-meta{margin:12px 0 0; font-weight:500; color:var(--ink-soft); font-size:12.5px;}' +
+    '#appliances-section .appliances-meta .dirty{color:var(--accent);}' +
+    '#appliances-section .appliances-save{display:block; width:100%; margin-top:12px; min-height:48px;}' +
+    '#appliances-section .status-line{text-align:left;}' +
     '.appliances-note{margin-top:14px;}';
 
   const APPL_HTML =
     '<section class="panel">' +
       '<div class="panel-head"><h3>使っている調理家電</h3></div>' +
-      '<p class="input-hint">お持ちの調理家電と「できる操作」を登録しておくと、その家電でできない工程(例:炒められない家電で「炒める」)をレシピに書かないようにします。ひな形の内容は目安です。お使いの機種に合わせて確認・修正してください。</p>' +
+      '<p class="input-hint">お持ちの調理家電の説明書(PDF)を読み取って登録します。登録した内容はレシピを作るたびにAIへ伝わり、その家電でできない工程(例:炒められない家電で「炒める」)や、容量・温度・時間の範囲を超える手順を書かないようにします。読み取った内容が合っているか見返し、違うところは「編集」で直せます。</p>' +
       '<div class="appliance-list" id="appliances-list"></div>' +
-      '<div class="appliance-add-row">' +
-        '<button type="button" class="btn btn-secondary" id="btn-appliance-preset" aria-expanded="false">ひな形から追加</button>' +
-        '<button type="button" class="btn btn-secondary" id="btn-appliance-custom">自分で追加</button>' +
+      '<div class="appliance-add">' +
+        '<button type="button" class="btn btn-secondary appliance-add-btn" id="btn-appliance-add">' + ADD_LABEL + '</button>' +
+        '<input type="file" id="appliance-file" accept="application/pdf" hidden>' +
+        '<p class="appliance-extract-notice">説明書の内容はAIに送信されます。PDFそのものは保存されません。1日3回まで</p>' +
+        '<p class="appliance-extract-warn">読み取り中はこの画面を閉じないでください</p>' +
+        '<p class="appliance-msg" id="appliance-add-msg" role="status"></p>' +
       '</div>' +
-      '<div class="appliance-preset-list" id="appliance-preset-list" hidden></div>' +
       '<p class="appliances-meta" id="appliances-count"></p>' +
       '<button type="button" class="btn btn-secondary appliances-save" id="btn-appliances-save">保存</button>' +
       '<p id="appliances-status" class="status-line" hidden></p>' +
       '<p class="input-hint appliances-note">保存した内容は、次のレシピ作成から反映されます。チェックのない操作は「できない操作」としてAIに伝わります。AIがすべてに応えられないこともあります。</p>' +
     '</section>';
 
-  let sectionEl = null, listEl = null, countEl = null, statusEl = null, saveBtn = null, presetBtn = null, customBtn = null, presetListEl = null;
+  let sectionEl = null, listEl = null, countEl = null, statusEl = null, saveBtn = null, addBtn = null, fileEl = null, addMsgEl = null;
   let saved = [];                                                              // サーバーに保存されている内容(未保存の判定用)
   let limits = { max: 5, maxNameLength: 20, maxNoteLength: 100 };              // サーバーの上限(読み込み時に更新)
   let saving = false;                                                          // 保存の通信の最中か
-  let readsInFlight = 0;                                                       // 説明書の読み取り(AI呼び出しを含む)の最中の件数。0より大きい間は保存を受け付けない(カードが作り直され、支払い済みの結果が捨てられるのを防ぐ)
+  let readsInFlight = 0;                                                       // 説明書の読み取り(AI呼び出しを含む)の最中の件数(0か1)。0より大きい間は、保存と次の読み取りを受け付けない
+  let readTarget = null;                                                       // いま読み取りの対象にしているもの: { card } = その家電を読み直す / null = 新しく追加
+  let activeReadBtn = null;                                                    // 「読み取り中…」と表示しているボタン
+  let readingCard = null;                                                      // 読み直しの最中の家電(新規追加の読み取りなら null)
   let sessionEpoch = 0;                                                        // ログイン状態が変わるたびに進める。読み取り中の応答が、別の人の画面に出ないようにする
   let epoch = 0;                                                               // 通信を始めるたび・ログアウトのたびに進める。古い応答(遅れて届いたもの)は画面に反映しない
 
   function recordError(err, extra){
     if(typeof logError === 'function') logError('appliances', err, extra);
-  }
-  // 「読み取り機能を読み込めない」原因の調査。manual-text.js が HTML に載っているか・取得できるか・JavaScriptとして実行できたかを調べ、エラーログへ残す
-  async function diagnoseManualText(){
-    const info = { typeofManualText: typeof ManualText };
-    let why = '不明';
-    try {
-      const tag = Array.prototype.find.call(document.scripts || [], s => /manual-text\.js/.test(s.getAttribute('src') || ''));
-      info.scriptTagInHtml = !!tag;
-      if(!tag) why = 'index.html に manual-text.js の script タグがありません';
-      const url = tag ? tag.src : new URL('js/manual-text.js', location.href).href;
-      info.url = url;
-      try {
-        const res = await fetch(url, { cache: 'no-store' });
-        info.status = res.status;
-        info.contentType = res.headers.get('content-type') || '';
-        const body = await res.text();
-        info.head = body.slice(0, 40).replace(/\s+/g, ' ');
-        const fileState = !res.ok ? 'ファイルを取得できません(HTTP ' + res.status + ')' : /^\s*</.test(body) ? 'ファイルの場所にHTMLが返っています(未配置の可能性)' : 'ファイルは取得できます';
-        if(!tag) why = 'index.html に manual-text.js の script タグがありません(' + fileState + ')';
-        else if(!res.ok) why = 'manual-text.js を取得できません(HTTP ' + res.status + ')';
-        else if(/^\s*</.test(body)) why = 'manual-text.js の場所に HTML が返っています(ファイル未配置の可能性)';
-        else why = 'manual-text.js は取得できたが実行に失敗(ブラウザのコンソール参照)';
-      } catch(e){
-        info.fetchError = String(e && e.message || e);
-        if(tag) why = 'manual-text.js の取得に失敗(通信エラー)';
-      }
-    } catch(e){
-      info.diagnoseError = String(e && e.message || e);
-    }
-    info.why = why;
-    recordError(new Error('ManualText 未読み込み: ' + why), info);
-    return why;
   }
   function showStatus(msg, isError){
     if(!statusEl) return;
@@ -121,8 +104,9 @@
   function clean(text){ return String(text == null ? '' : text).replace(/\s+/g, ' ').trim(); }
   function opIds(){ return APPLIANCE_OPS.map(o => o.id); }
   function policyIds(){ return APPLIANCE_POLICIES.map(p => p.id); }
+  function opLabel(id){ const o = APPLIANCE_OPS.find(x => x.id === id); return o ? o.label : id; }
+  function dedupeKey(t){ return String(t).normalize('NFKC').toLowerCase().replace(/\s+/g, ''); }
 
-  // サーバーや保存済みの1台分を、画面で扱う形に整える(canは正本の順・知らないidは捨てる)
   // 仕様(spec)を整える。空なら null(=spec は項目ごと無し)。モード名の無いモードと空の注意点は捨てる
   function normalizeSpec(s){
     if(!s || typeof s !== 'object' || Array.isArray(s)) return null;
@@ -132,6 +116,7 @@
     return (!out.capacity && !out.ranges && !modes.length && !cautions.length) ? null : out;
   }
 
+  // サーバーや保存済みの1台分を、画面で扱う形に整える(canは正本の順・知らないidは捨てる)
   function normalize(a){
     const can = Array.isArray(a && a.can) ? a.can : [];
     const out = {
@@ -141,32 +126,30 @@
       note: clean(a && a.note),
     };
     const spec = normalizeSpec(a && a.spec);
-    if(spec) out.spec = spec; // 空なら spec キーは付けない(従来の家電と同じ形)
+    if(spec) out.spec = spec; // 空なら spec キーは付けない
     return out;
   }
 
   function cardEls(){ return Array.prototype.slice.call(listEl.querySelectorAll('.appliance-card')); }
 
-  // 画面の中身を、サーバーへ送る形で取り出す
-  function currentList(){
-    return cardEls().map(card => normalize({
-      name: card.querySelector('.appliance-name').value,
-      can: card._parts.ops.read(),
-      policy: card.querySelector('.appliance-policy').value,
-      note: card.querySelector('.appliance-note').value,
-      spec: card._parts.spec.read(),
-    }));
+  // 1台分の「いまの内容」。編集中は入力欄から、そうでなければ保持している内容から
+  function readCard(card){ return card._editing ? readEditors(card) : card._model; }
+  function currentList(){ return cardEls().map(readCard); }
+
+  function el(tag, cls, text){
+    const e = document.createElement(tag);
+    if(cls) e.className = cls;
+    if(text != null) e.textContent = text;
+    return e;
   }
 
-  // 「できる操作」のチェック欄。カードの中と、読み取りの確認欄の両方で使う。read() はチェック済みの id(正本の順)
+  // 「できる操作」のチェック欄。read() はチェック済みの id(正本の順)
   function buildOpsEditor(can, onChange){
-    const ops = document.createElement('div');
-    ops.className = 'appliance-ops';
+    const ops = el('div', 'appliance-ops');
     ops.setAttribute('role', 'group');
     const list = Array.isArray(can) ? can : [];
     APPLIANCE_OPS.forEach(op => {
-      const label = document.createElement('label');
-      label.className = 'appliance-op-label';
+      const label = el('label', 'appliance-op-label');
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.className = 'appliance-op';
@@ -189,16 +172,10 @@
   function buildSpecEditor(spec, onChange){
     const L = APPLIANCE_SPEC_LIMITS;
     const v = normalizeSpec(spec) || { capacity: '', modes: [], ranges: '', cautions: [] };
-    const root = document.createElement('div');
-    root.className = 'spec-editor';
+    const root = el('div', 'spec-editor');
     const changed = function(){ if(onChange) onChange(); };
 
-    function label(text){
-      const l = document.createElement('span');
-      l.className = 'appliance-label';
-      l.textContent = text;
-      root.appendChild(l);
-    }
+    function label(text){ root.appendChild(el('span', 'appliance-label', text)); }
     function input(cls, value, max, aria, placeholder){
       const i = document.createElement('input');
       i.type = 'text';
@@ -212,11 +189,9 @@
       return i;
     }
     function removeBtn(cls, aria, row){
-      const b = document.createElement('button');
+      const b = el('button', 'spec-remove ' + cls, '×');
       b.type = 'button';
-      b.className = 'spec-remove ' + cls;
       b.setAttribute('aria-label', aria);
-      b.textContent = '×';
       b.addEventListener('click', function(){ row.remove(); refresh(); changed(); });
       return b;
     }
@@ -229,10 +204,8 @@
     const modesEl = document.createElement('div');
     root.appendChild(modesEl);
     function addMode(m){
-      const row = document.createElement('div');
-      row.className = 'spec-row spec-mode';
-      const fields = document.createElement('div');
-      fields.className = 'spec-row-fields';
+      const row = el('div', 'spec-row spec-mode');
+      const fields = el('div', 'spec-row-fields');
       fields.appendChild(input('spec-mode-name', m.name, L.modeName, 'モード名', 'モード名'));
       fields.appendChild(input('spec-mode-desc', m.desc, L.modeDesc, 'モードの説明', '説明(任意)'));
       row.appendChild(fields);
@@ -240,10 +213,8 @@
       modesEl.appendChild(row);
     }
     v.modes.forEach(addMode);
-    const addModeBtn = document.createElement('button');
+    const addModeBtn = el('button', 'btn btn-secondary spec-add spec-mode-add', '+ モードを追加');
     addModeBtn.type = 'button';
-    addModeBtn.className = 'btn btn-secondary spec-add spec-mode-add';
-    addModeBtn.textContent = '+ モードを追加';
     addModeBtn.addEventListener('click', function(){
       addMode({ name: '', desc: '' }); refresh(); changed();
       const names = modesEl.querySelectorAll('.spec-mode-name');
@@ -251,7 +222,7 @@
     });
     root.appendChild(addModeBtn);
 
-    label('範囲・温度(例: 40〜100度、最大12時間)');
+    label('温度・時間などの範囲(例: 40〜100度、最大12時間)');
     const ranges = input('spec-ranges', v.ranges, L.ranges, '範囲・温度');
     root.appendChild(ranges);
 
@@ -259,20 +230,16 @@
     const cautionsEl = document.createElement('div');
     root.appendChild(cautionsEl);
     function addCaution(c){
-      const row = document.createElement('div');
-      row.className = 'spec-row';
-      const fields = document.createElement('div');
-      fields.className = 'spec-row-fields';
+      const row = el('div', 'spec-row');
+      const fields = el('div', 'spec-row-fields');
       fields.appendChild(input('spec-caution', c, L.caution, '注意点'));
       row.appendChild(fields);
       row.appendChild(removeBtn('spec-caution-remove', 'この注意点を削除', row));
       cautionsEl.appendChild(row);
     }
     v.cautions.forEach(addCaution);
-    const addCautionBtn = document.createElement('button');
+    const addCautionBtn = el('button', 'btn btn-secondary spec-add spec-caution-add', '+ 注意点を追加');
     addCautionBtn.type = 'button';
-    addCautionBtn.className = 'btn btn-secondary spec-add spec-caution-add';
-    addCautionBtn.textContent = '+ 注意点を追加';
     addCautionBtn.addEventListener('click', function(){
       addCaution(''); refresh(); changed();
       const cs = cautionsEl.querySelectorAll('.spec-caution');
@@ -299,201 +266,165 @@
     };
   }
 
-  function addCard(a){
+  // ---- 1台分のカード(表示モード=情報の一覧 / 編集モード=入力欄) ----
+  function addCard(a, opts){
     if(cardEls().length >= limits.max) return null;
-    const v = normalize(a || {});
-    const card = document.createElement('div');
-    card.className = 'appliance-card';
+    const card = el('div', 'appliance-card');
+    card._model = normalize(a || {});
+    card._editing = false;
+    card._parts = null;                                       // 編集中だけ { name, ops, spec, note }
+    card._banner = (opts && opts.banner) || '';               // 読み取った直後などの「確認してください」の案内(保存すると消える)
+    listEl.appendChild(card);
+    renderCard(card);
+    return card;
+  }
 
-    const head = document.createElement('div');
-    head.className = 'appliance-head';
+  function renderCard(card){
+    card.innerHTML = '';
+    if(card._editing) renderEdit(card); else renderView(card);
+  }
+
+  function removeCard(card){
+    if(card === (readTarget && readTarget.card)) readTarget = null;
+    card.remove();
+    renderMeta();
+  }
+
+  // 情報の一覧の1行。values は文字列の配列(0件なら「読み取れませんでした」)。sub は各行の補助説明(任意)
+  function infoRow(label, values, subs){
+    const row = el('div', 'appliance-info-row');
+    row.appendChild(el('dt', null, label));
+    const dd = el('dd');
+    const items = (values || []).filter(Boolean);
+    if(!items.length){
+      dd.className = 'is-empty';
+      dd.textContent = NOT_READ;
+    } else if(items.length === 1 && !(subs && subs[0])){
+      dd.textContent = items[0];
+    } else {
+      const ul = document.createElement('ul');
+      items.forEach((t, i) => {
+        const li = el('li', null, t);
+        if(subs && subs[i]) li.appendChild(el('span', 'info-sub', ' — ' + subs[i]));
+        ul.appendChild(li);
+      });
+      dd.appendChild(ul);
+    }
+    row.appendChild(dd);
+    return row;
+  }
+
+  function renderView(card){
+    const m = card._model;
+    const head = el('div', 'appliance-head');
+    head.appendChild(el('h4', 'appliance-title', m.name));
+    const rm = el('button', 'appliance-remove', '×');
+    rm.type = 'button';
+    rm.setAttribute('aria-label', 'この家電を削除');
+    rm.addEventListener('click', function(){ removeCard(card); });
+    head.appendChild(rm);
+    card.appendChild(head);
+
+    if(!m.spec){
+      card.appendChild(el('p', 'appliance-banner appliance-banner-nospec', 'この家電には説明書から読み取った内容がありません。「' + REREAD_LABEL + '」で説明書を読み取るか、削除してください(説明書の内容がない家電は保存できません)。'));
+    } else if(card._banner){
+      card.appendChild(el('p', 'appliance-banner', card._banner));
+    }
+
+    const spec = m.spec || { capacity: '', modes: [], ranges: '', cautions: [] };
+    const cannot = APPLIANCE_OPS.filter(o => m.can.indexOf(o.id) < 0).map(o => o.label);
+    const dl = el('dl', 'appliance-info');
+    const canRow = infoRow('できること', m.can.length ? [m.can.map(opLabel).join('、')] : []);
+    if(!m.can.length){ const dd = canRow.querySelector('dd'); dd.className = ''; dd.textContent = 'なし'; }
+    dl.appendChild(canRow);
+    const cannotRow = infoRow('できないこと', cannot.length ? [cannot.join('、')] : []);
+    if(!cannot.length){ const dd = cannotRow.querySelector('dd'); dd.className = ''; dd.textContent = 'なし'; }
+    dl.appendChild(cannotRow);
+    dl.appendChild(infoRow('容量', [spec.capacity]));
+    dl.appendChild(infoRow('モード', spec.modes.map(x => x.name), spec.modes.map(x => x.desc)));
+    dl.appendChild(infoRow('温度・時間などの範囲', [spec.ranges]));
+    dl.appendChild(infoRow('注意点', spec.cautions));
+    dl.appendChild(infoRow('補足', [m.note]));
+    card.appendChild(dl);
+
+    const msg = el('p', 'appliance-msg appliance-reread-msg');
+    msg.setAttribute('role', 'status');
+    card._msg = msg;
+
+    const actions = el('div', 'appliance-actions');
+    const edit = el('button', 'btn btn-secondary appliance-edit', '編集');
+    edit.type = 'button';
+    edit.addEventListener('click', function(){ card._editing = true; renderCard(card); renderMeta(); });
+    actions.appendChild(edit);
+    if(typeof isLoggedIn === 'function' && isLoggedIn()){
+      const reread = el('button', 'btn btn-secondary appliance-reread', REREAD_LABEL);
+      reread.type = 'button';
+      reread.addEventListener('click', function(){ startPicking({ card: card }); });
+      actions.appendChild(reread);
+    }
+    card.appendChild(actions);
+    card.appendChild(msg);
+  }
+
+  function readEditors(card){
+    const p = card._parts;
+    return normalize({
+      name: p.name.value,
+      can: p.ops.read(),
+      policy: card._model.policy,
+      note: p.note.value,
+      spec: p.spec.read(),
+    });
+  }
+
+  function renderEdit(card){
+    const m = card._model;
+    const head = el('div', 'appliance-head');
     const name = document.createElement('input');
     name.type = 'text';
     name.className = 'appliance-name';
     name.autocomplete = 'off';
     name.setAttribute('aria-label', '調理家電の名前');
     name.placeholder = '家電の名前';
-    name.value = v.name;
-    const rm = document.createElement('button');
+    name.value = m.name;
+    const rm = el('button', 'appliance-remove', '×');
     rm.type = 'button';
-    rm.className = 'appliance-remove';
     rm.setAttribute('aria-label', 'この家電を削除');
-    rm.textContent = '×';
     head.appendChild(name);
     head.appendChild(rm);
     card.appendChild(head);
 
-    const opsLabel = document.createElement('span');
-    opsLabel.className = 'appliance-label';
-    opsLabel.textContent = 'できる操作(チェックのない操作は「できない」と伝えます)';
-    card.appendChild(opsLabel);
-    const opsEditor = buildOpsEditor(v.can, renderMeta);
-    card.appendChild(opsEditor.el);
+    card.appendChild(el('span', 'appliance-label', 'できる操作(チェックのない操作は「できない」と伝えます)'));
+    const ops = buildOpsEditor(m.can, renderMeta);
+    card.appendChild(ops.el);
 
-    const polLabel = document.createElement('span');
-    polLabel.className = 'appliance-label';
-    polLabel.textContent = '使い方の方針';
-    card.appendChild(polLabel);
-    const pol = document.createElement('select');
-    pol.className = 'appliance-policy';
-    pol.setAttribute('aria-label', '使い方の方針');
-    APPLIANCE_POLICIES.forEach(p => {
-      const o = document.createElement('option');
-      o.value = p.id;
-      o.textContent = p.label;
-      pol.appendChild(o);
-    });
-    pol.value = v.policy;
-    card.appendChild(pol);
+    const spec = buildSpecEditor(m.spec || null, renderMeta);
+    card.appendChild(spec.el);
 
-    const noteLabel = document.createElement('span');
-    noteLabel.className = 'appliance-label';
-    noteLabel.textContent = '補足(任意。モード名など)';
-    card.appendChild(noteLabel);
+    card.appendChild(el('span', 'appliance-label', '補足(任意)'));
     const note = document.createElement('textarea');
     note.className = 'appliance-note';
     note.rows = 3;
     note.setAttribute('aria-label', '補足');
-    note.value = v.note;
+    note.value = m.note;
     card.appendChild(note);
 
-    // 仕様(任意)の編集欄(折りたたみ)
-    const details = document.createElement('details');
-    details.className = 'appliance-spec';
-    const summary = document.createElement('summary');
-    summary.textContent = '仕様(任意)';
-    details.appendChild(summary);
-    const specEditor = buildSpecEditor(v.spec || null, renderMeta);
-    details.appendChild(specEditor.el);
-    card.appendChild(details);
-    card._parts = { ops: opsEditor, spec: specEditor };
+    const actions = el('div', 'appliance-actions');
+    const done = el('button', 'btn appliance-done', '編集を終わる');
+    done.type = 'button';
+    actions.appendChild(done);
+    card.appendChild(actions);
 
-    // 説明書PDFから読み取る(ログイン中だけ)
-    if(typeof isLoggedIn === 'function' && isLoggedIn()) addExtract(card, name, note);
-
+    card._parts = { name: name, ops: ops, spec: spec, note: note };
     name.addEventListener('input', renderMeta);
-    pol.addEventListener('change', renderMeta);
     note.addEventListener('input', renderMeta);
-    rm.addEventListener('click', function(){ card.remove(); renderMeta(); });
-    listEl.appendChild(card);
-    return card;
-  }
-
-  // 説明書PDFの読み取り(カード内)。PDFはこの端末で文字にし、文字だけを /extract に送る。反映しただけでは保存しない
-  const EXTRACT_LABEL = '説明書PDFから読み取る';
-  function addExtract(card, nameEl, noteEl){
-    const wrap = document.createElement('div');
-    wrap.className = 'appliance-extract';
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-secondary appliance-extract-btn';
-    btn.textContent = EXTRACT_LABEL;
-    const file = document.createElement('input');
-    file.type = 'file';
-    file.accept = 'application/pdf';
-    file.hidden = true;
-    const notice = document.createElement('p');
-    notice.className = 'appliance-extract-notice';
-    notice.textContent = '説明書の内容はAIに送信されます。PDFそのものは保存されません。1日3回まで';
-    const warn = document.createElement('p');
-    warn.className = 'appliance-extract-warn';
-    warn.textContent = '読み取り中はこの画面を閉じないでください';
-    const msg = document.createElement('p');
-    msg.className = 'appliance-extract-msg';
-    msg.setAttribute('role', 'status');
-    const slot = document.createElement('div');
-    wrap.appendChild(btn); wrap.appendChild(file); wrap.appendChild(notice); wrap.appendChild(warn); wrap.appendChild(msg); wrap.appendChild(slot);
-    card.appendChild(wrap);
-
-    let reading = false; // 読み取りの最中か(二重押しでも通信は1回)
-    btn.addEventListener('click', function(){ if(!reading) file.click(); });
-
-    function showPanel(proposal){
-      slot.innerHTML = '';
-      const panel = document.createElement('div');
-      panel.className = 'appliance-extract-panel';
-      const title = document.createElement('p');
-      title.className = 'appliance-extract-title';
-      title.textContent = '読み取った内容(確認・修正してください)';
-      panel.appendChild(title);
-      const l1 = document.createElement('span');
-      l1.className = 'appliance-label';
-      l1.textContent = 'できる操作';
-      panel.appendChild(l1);
-      const ops = buildOpsEditor(proposal.can);
-      panel.appendChild(ops.el);
-      const spec = buildSpecEditor(proposal.spec);
-      panel.appendChild(spec.el);
-      const pnote = clean(proposal.note);
-      if(pnote){
-        const n = document.createElement('p');
-        n.className = 'appliance-extract-proposal-note';
-        n.textContent = '補足の候補: ' + pnote;
-        panel.appendChild(n);
-      }
-      const actions = document.createElement('div');
-      actions.className = 'appliance-extract-actions';
-      const apply = document.createElement('button');
-      apply.type = 'button';
-      apply.className = 'btn appliance-extract-apply';
-      apply.textContent = 'この内容を反映';
-      const cancel = document.createElement('button');
-      cancel.type = 'button';
-      cancel.className = 'btn btn-secondary appliance-extract-cancel';
-      cancel.textContent = 'やめる';
-      actions.appendChild(apply); actions.appendChild(cancel);
-      panel.appendChild(actions);
-      apply.addEventListener('click', function(){
-        const o = buildOpsEditor(ops.read(), renderMeta);
-        card._parts.ops.el.replaceWith(o.el);
-        card._parts.ops = o;
-        const sp = buildSpecEditor(spec.read(), renderMeta);
-        card._parts.spec.el.replaceWith(sp.el);
-        card._parts.spec = sp;
-        if(pnote && !clean(noteEl.value)) noteEl.value = pnote; // 補足は、空のときだけ入れる
-        slot.innerHTML = '';
-        renderMeta(); // 保存はしない(「保存」ボタンのみ)
-      });
-      cancel.addEventListener('click', function(){ slot.innerHTML = ''; });
-      slot.appendChild(panel);
-    }
-
-    file.addEventListener('change', async function(){
-      const f = file.files && file.files[0];
-      file.value = ''; // 同じファイルをもう一度選べるように
-      if(!f || reading) return;
-      reading = true;
-      const mine = sessionEpoch;
-      readsInFlight++;
-      const stale = () => mine !== sessionEpoch || !card.isConnected; // ログアウト・別のログイン・カードの削除/作り直しのあとの応答は出さない
-      btn.disabled = true;
-      btn.textContent = '読み取り中…';
-      msg.textContent = '';
-      slot.innerHTML = '';
-      try {
-        if(typeof ManualText === 'undefined'){
-          const why = await diagnoseManualText(); // 原因をエラーログへ(通信は同じ配信元の静的ファイルの取得のみ。AIは呼ばない)
-          throw new Error('読み取り機能を読み込めませんでした。ページを再読み込みしてください。(原因: ' + why + ')');
-        }
-        const r = await ManualText.extractFromFile(f); // 失敗したら /extract は呼ばない
-        if(stale()) return;
-        const data = await applianceFetch({
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: clean(nameEl.value) || '調理家電', text: r.text }),
-        }, APPL_URL + '/extract');
-        if(stale()) return;
-        if(!data.proposal || typeof data.proposal !== 'object') throw new Error('読み取り結果を受け取れませんでした。もう一度お試しください。');
-        showPanel(data.proposal);
-      } catch(err){
-        if(stale()) return;
-        recordError(err, { step: 'manual-extract', code: err && err.code }); // 画面に出した失敗はすべてログへ(本文・PDFは含めない)
-        msg.textContent = (err && err.message) || '読み取れませんでした。もう一度お試しください。';
-      } finally {
-        reading = false;
-        if(mine === sessionEpoch && readsInFlight > 0) readsInFlight--; // ログイン状態が変わったときは onAppliancesAuthChanged が 0 に戻している
-        if(!stale()){ btn.disabled = false; btn.textContent = EXTRACT_LABEL; }
-      }
+    rm.addEventListener('click', function(){ removeCard(card); });
+    done.addEventListener('click', function(){
+      card._model = readEditors(card);
+      card._editing = false;
+      card._parts = null;
+      renderCard(card);
+      renderMeta();
     });
   }
 
@@ -502,26 +433,30 @@
     list.forEach(a => addCard(a));
   }
 
-  function closePresets(){
-    presetListEl.hidden = true;
-    presetBtn.setAttribute('aria-expanded', 'false');
-  }
-
   function renderMeta(){
     if(!countEl) return;
     const cur = currentList();
     const dirty = JSON.stringify(cur) !== JSON.stringify(saved);
     countEl.textContent = cur.length + ' / ' + limits.max + ' 台';
     if(dirty){
-      const span = document.createElement('span');
-      span.className = 'dirty';
-      span.textContent = '(未保存の変更があります)';
+      const span = el('span', 'dirty', '(未保存の変更があります)');
       countEl.appendChild(span);
     }
+    const reading = readsInFlight > 0;
     const full = cur.length >= limits.max;
-    customBtn.disabled = full;
-    presetBtn.disabled = full;
-    if(full) closePresets();
+    addBtn.disabled = full || reading;
+    Array.prototype.forEach.call(listEl.querySelectorAll('.appliance-reread'), b => { b.disabled = reading; });
+    if(!reading){
+      addBtn.textContent = ADD_LABEL;
+      Array.prototype.forEach.call(listEl.querySelectorAll('.appliance-reread'), b => { b.textContent = REREAD_LABEL; });
+    } else if(activeReadBtn && activeReadBtn.isConnected){
+      activeReadBtn.textContent = READING_LABEL;
+    }
+    // 読み取り中の家電は、編集で内容が入れ替わらないよう編集ボタンを押せなくする
+    Array.prototype.forEach.call(listEl.querySelectorAll('.appliance-card'), c => {
+      const e = c.querySelector('.appliance-edit');
+      if(e) e.disabled = reading && c === readingCard;
+    });
     saveBtn.disabled = saving;
   }
 
@@ -569,18 +504,102 @@
     renderMeta();
   }
 
+  // ---- 説明書PDFの読み取り(新しく追加 / 既存の家電を読み直す) ----
+  // PDFはこの端末で文字にし、文字だけを /extract に送る。AIを呼ぶのは /extract の1回だけ。結果はカードに入れるだけで、保存はしない
+  function startPicking(target){
+    if(readsInFlight > 0) return;                  // 読み取りは同時に1件だけ
+    if(!target && cardEls().length >= limits.max) return;
+    readTarget = target || null;
+    fileEl.click();
+  }
+
+  function nameFromFile(f){
+    const base = clean(String((f && f.name) || '').replace(/\.pdf$/i, ''));
+    return (base || '調理家電').slice(0, limits.maxNameLength);
+  }
+  function uniqueName(name, exceptCard){
+    const taken = new Set(cardEls().filter(c => c !== exceptCard).map(c => dedupeKey(readCard(c).name)));
+    if(!taken.has(dedupeKey(name))) return name;
+    for(let n = 2; n < 20; n++){
+      const suffix = '(' + n + ')';
+      const cand = name.slice(0, Math.max(1, limits.maxNameLength - suffix.length)) + suffix;
+      if(!taken.has(dedupeKey(cand))) return cand;
+    }
+    return name;
+  }
+
+  async function runRead(f, target){
+    const mine = sessionEpoch;
+    const card = target && target.card;
+    const stale = () => mine !== sessionEpoch || (card && !card.isConnected); // ログアウト・別のログイン・カードの削除/作り直しのあとの応答は出さない
+    const setMsg = (t, ok) => { const m = card ? card._msg : addMsgEl; if(m){ m.textContent = t; m.classList.toggle('is-ok', !!ok); } };
+    readsInFlight++;
+    activeReadBtn = card ? card.querySelector('.appliance-reread') : addBtn;
+    readingCard = card || null;
+    setMsg('');
+    renderMeta();
+    try {
+      if(typeof ManualText === 'undefined') throw new Error('読み取り機能を読み込めませんでした。ページを再読み込みしてください。');
+      const r = await ManualText.extractFromFile(f); // 失敗したら /extract は呼ばない
+      if(stale()) return;
+      const sendName = card ? (readCard(card).name || nameFromFile(f)) : nameFromFile(f);
+      const data = await applianceFetch({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: sendName, text: r.text }),
+      }, EXTRACT_URL);
+      if(stale()) return;
+      const p = data.proposal;
+      if(!p || typeof p !== 'object') throw new Error('読み取り結果を受け取れませんでした。もう一度お試しください。');
+      const left = (typeof data.remaining === 'number') ? '(今日はあと' + data.remaining + '回読み取れます)' : '';
+      if(card){
+        // 読み直し: 名前と方針は残し、できる操作・仕様・補足を読み取り結果に置き換える(保存するまでは確定しない)
+        const old = card._model;
+        card._model = normalize({ name: old.name, policy: old.policy, can: p.can, note: p.note, spec: p.spec });
+        card._editing = false; card._parts = null;
+        card._banner = '読み取り直した内容です。合っているか確認して、「保存」を押してください。';
+        renderCard(card);
+        setMsg('読み取りました' + left, true);
+      } else {
+        const created = addCard({ name: uniqueName(nameFromFile(f)), can: p.can, policy: 'optional', note: p.note, spec: p.spec },
+          { banner: '読み取った内容です。合っているか確認して、「保存」を押してください。名前は「編集」から直せます。' });
+        if(created){
+          setMsg('読み取りました' + left, true);
+          if(created.scrollIntoView) created.scrollIntoView({ block: 'nearest' });
+        } else {
+          setMsg('登録できるのは' + limits.max + '台までです。');
+        }
+      }
+    } catch(err){
+      if(stale()) return;
+      setMsg((err && err.message) || '読み取れませんでした。もう一度お試しください。');
+    } finally {
+      if(mine === sessionEpoch && readsInFlight > 0) readsInFlight--; // ログイン状態が変わったときは onAppliancesAuthChanged が 0 に戻している
+      if(mine === sessionEpoch){ activeReadBtn = null; readingCard = null; }
+      renderMeta();
+    }
+  }
+
+  // 保存前の確認(通信する前に、画面でも確認する。サーバーも同じ確認をする)
+  function validate(list){
+    if(list.length > limits.max) return '登録できるのは' + limits.max + '台までです。';
+    const noName = list.findIndex(a => !a.name);
+    if(noName >= 0) return (noName + 1) + '台目の名前を入力してください。';
+    const longName = list.find(a => a.name.length > limits.maxNameLength);
+    if(longName) return '名前「' + longName.name.slice(0, 8) + '…」は長すぎます(' + limits.maxNameLength + '文字までです)。';
+    const longNote = list.find(a => a.note.length > limits.maxNoteLength);
+    if(longNote) return '「' + longNote.name.slice(0, 8) + '」の補足は長すぎます(' + limits.maxNoteLength + '文字までです)。';
+    const noSpec = list.find(a => !a.spec);
+    if(noSpec) return '「' + noSpec.name.slice(0, 8) + (noSpec.name.length > 8 ? '…' : '') + '」には説明書から読み取った内容がありません。「' + REREAD_LABEL + '」で読み取るか、削除してください。';
+    return '';
+  }
+
   async function save(){
     if(saving) return;
     if(readsInFlight > 0){ showStatus('読み取りが終わるまでお待ちください', true); return; } // 保存すると画面が作り直され、読み取り結果が出せなくなる
     const list = currentList();
-    // 通信する前に、画面でも確認する(サーバーも同じ確認をする)
-    if(list.length > limits.max){ showStatus('登録できるのは' + limits.max + '台までです。', true); return; }
-    const noName = list.findIndex(a => !a.name);
-    if(noName >= 0){ showStatus((noName + 1) + '台目の名前を入力してください。', true); return; }
-    const longName = list.find(a => a.name.length > limits.maxNameLength);
-    if(longName){ showStatus('名前「' + longName.name.slice(0, 8) + '…」は長すぎます(' + limits.maxNameLength + '文字までです)。', true); return; }
-    const longNote = list.find(a => a.note.length > limits.maxNoteLength);
-    if(longNote){ showStatus('「' + longNote.name.slice(0, 8) + '」の補足は長すぎます(' + limits.maxNoteLength + '文字までです)。', true); return; }
+    const problem = validate(list);
+    if(problem){ showStatus(problem, true); return; }
     saving = true;
     const mine = ++epoch; // 読み込み中の古い応答は、これで無効になる
     saveBtn.disabled = true;
@@ -612,7 +631,7 @@
       if(typeof document.createElement !== 'function' || !document.head) return;
       const view = document.getElementById('view-settings');
       const adminEl = document.getElementById('admin-section');
-      if(!view || !adminEl || typeof APPLIANCE_OPS === 'undefined') return;
+      if(!view || !adminEl || typeof APPLIANCE_OPS === 'undefined' || typeof APPLIANCE_SPEC_LIMITS === 'undefined') return;
 
       const style = document.createElement('style');
       style.id = 'appliances-style';
@@ -629,34 +648,18 @@
       countEl = document.getElementById('appliances-count');
       statusEl = document.getElementById('appliances-status');
       saveBtn = document.getElementById('btn-appliances-save');
-      presetBtn = document.getElementById('btn-appliance-preset');
-      customBtn = document.getElementById('btn-appliance-custom');
-      presetListEl = document.getElementById('appliance-preset-list');
+      addBtn = document.getElementById('btn-appliance-add');
+      fileEl = document.getElementById('appliance-file');
+      addMsgEl = document.getElementById('appliance-add-msg');
 
-      APPLIANCE_PRESETS.forEach(p => {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'btn btn-secondary appliance-preset-btn';
-        b.setAttribute('data-key', p.key);
-        b.textContent = p.name;
-        b.addEventListener('click', function(){
-          const card = addCard(p);
-          closePresets();
-          renderMeta();
-          if(card && card.scrollIntoView) card.scrollIntoView({ block: 'nearest' });
-        });
-        presetListEl.appendChild(b);
-      });
-      presetBtn.addEventListener('click', function(){
-        const open = presetListEl.hidden;
-        presetListEl.hidden = !open;
-        presetBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-      });
-      customBtn.addEventListener('click', function(){
-        const card = addCard({});
-        closePresets();
-        renderMeta();
-        if(card) card.querySelector('.appliance-name').focus();
+      addBtn.addEventListener('click', function(){ startPicking(null); });
+      fileEl.addEventListener('change', function(){
+        const f = fileEl.files && fileEl.files[0];
+        fileEl.value = ''; // 同じファイルをもう一度選べるように
+        const target = readTarget;
+        readTarget = null;
+        if(!f || readsInFlight > 0) return;
+        runRead(f, target);
       });
       saveBtn.addEventListener('click', save);
       renderCards([]);
@@ -673,6 +676,9 @@
     const loggedIn = isLoggedIn();
     sessionEpoch++;
     readsInFlight = 0; // 古い読み取りの応答は sessionEpoch で捨てられる
+    activeReadBtn = null;
+    readingCard = null;
+    readTarget = null;
     sectionEl.hidden = !loggedIn;
     if(loggedIn){
       load();
@@ -682,8 +688,8 @@
       if(saveBtn) saveBtn.textContent = '保存';
       saved = [];
       renderCards([]);
-      closePresets();
       showStatus('', false);
+      if(addMsgEl) addMsgEl.textContent = '';
       renderMeta();
     }
   };
