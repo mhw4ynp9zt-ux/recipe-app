@@ -1,11 +1,11 @@
 // 設定タブの「使っている調理家電」欄。js/settings.js の「マイキッチン」と同じ作りです。
 // 【説明書PDFからのみ登録】家電は「説明書PDFから追加」でだけ増やせます(手入力・ひな形からの追加はありません)。
-//   読み取った内容は、見返しやすい「情報の一覧」(できること・できないこと・容量・モード・範囲・注意点・補足)で表示し、
-//   「編集」で名前・できる操作・仕様・補足を直せます。保存は「保存」ボタンのみ(自動保存はしません)。
+//   読み取った内容は、見返しやすい「情報の一覧」(補足・モード・容量・範囲・注意点。説明書の言葉のまま)で表示し、
+//   「編集」で名前・仕様・補足を直せます。調理ジャンル(炒める・茹でる…)の分類はありません。保存は「保存」ボタンのみ(自動保存はしません)。
 // ※読み取り(/api/user/appliances/extract)だけがAI(有料)を呼びます。1回の読み取りでAIは1回・1日3回まで(サーバー側で制限)。
 //   画面側でも、読み取り中は次の読み取りを受け付けません(同時に1件だけ)。保存・表示のAPIはDBの読み書きだけでAIは呼びません。
 // ※作れなかったときは、この機能だけ使わず、ほかの機能は止めません。
-// ※「できる操作」の選択肢は js/config.js の APPLIANCE_OPS、仕様の上限は APPLIANCE_SPEC_LIMITS。
+// ※仕様の上限は js/config.js の APPLIANCE_SPEC_LIMITS。
 (function(){
   const APPL_URL = '/api/user/appliances';
   const EXTRACT_URL = APPL_URL + '/extract';
@@ -40,7 +40,6 @@
     '#appliances-section .appliance-msg:empty{display:none;}' +
     '#appliances-section .appliance-msg.is-ok{color:var(--veg);}' +
     '#appliances-section .appliance-label{display:block; margin:12px 0 4px; font-size:12.5px; font-weight:700; color:var(--ink-soft);}' +
-    '#appliances-section .appliance-ops{display:flex; flex-wrap:wrap; gap:6px;}' +
     '#appliances-section .appliance-op-label{display:inline-flex; align-items:center; gap:6px; min-height:36px; padding:4px 12px 4px 8px; border:1.5px solid var(--line-strong); border-radius:100px; background:#fff; color:var(--ink); font-size:14px; cursor:pointer;}' +
     '#appliances-section .appliance-op{width:20px; height:20px; margin:0; accent-color:var(--brand);}' +
     '#appliances-section .appliance-note{display:block; width:100%; box-sizing:border-box; min-height:48px; padding:10px 12px; border:1.5px solid var(--line-strong); border-radius:12px; background:#fff; color:var(--ink); font:inherit; font-size:16px; line-height:1.5; resize:vertical;}' +
@@ -66,7 +65,7 @@
   const APPL_HTML =
     '<section class="panel">' +
       '<div class="panel-head"><h3>使っている調理家電</h3></div>' +
-      '<p class="input-hint">お持ちの調理家電の説明書(PDF)を読み取って登録します。登録した内容はレシピを作るたびにAIへ伝わり、その家電でできない工程(例:炒められない家電で「炒める」)や、容量・温度・時間の範囲を超える手順を書かないようにします。読み取った内容が合っているか見返し、違うところは「編集」で直せます。</p>' +
+      '<p class="input-hint">お持ちの調理家電の説明書(PDF)を読み取って登録します。登録した内容はレシピを作るたびにAIへ伝わり、説明書に書かれていない調理(例:炒められない家電で「炒める」)や、容量・温度・時間の範囲を超える手順を書かないようにします。読み取った内容が合っているか見返し、違うところは「編集」で直せます。</p>' +
       '<div class="appliance-list" id="appliances-list"></div>' +
       '<div class="appliance-add">' +
         '<button type="button" class="btn btn-secondary appliance-add-btn" id="btn-appliance-add">' + ADD_LABEL + '</button>' +
@@ -78,7 +77,7 @@
       '<p class="appliances-meta" id="appliances-count"></p>' +
       '<button type="button" class="btn btn-secondary appliances-save" id="btn-appliances-save">保存</button>' +
       '<p id="appliances-status" class="status-line" hidden></p>' +
-      '<p class="input-hint appliances-note">保存した内容は、次のレシピ作成から反映されます。チェックのない操作は「できない操作」としてAIに伝わります。AIがすべてに応えられないこともあります。</p>' +
+      '<p class="input-hint appliances-note">保存した内容は、次のレシピ作成から反映されます。AIがすべてに応えられないこともあります。</p>' +
     '</section>';
 
   let sectionEl = null, listEl = null, countEl = null, statusEl = null, saveBtn = null, addBtn = null, fileEl = null, addMsgEl = null;
@@ -102,9 +101,7 @@
     statusEl.style.color = isError ? 'var(--protein)' : 'var(--veg)';
   }
   function clean(text){ return String(text == null ? '' : text).replace(/\s+/g, ' ').trim(); }
-  function opIds(){ return APPLIANCE_OPS.map(o => o.id); }
   function policyIds(){ return APPLIANCE_POLICIES.map(p => p.id); }
-  function opLabel(id){ const o = APPLIANCE_OPS.find(x => x.id === id); return o ? o.label : id; }
   function dedupeKey(t){ return String(t).normalize('NFKC').toLowerCase().replace(/\s+/g, ''); }
 
   // 仕様(spec)を整える。空なら null(=spec は項目ごと無し)。モード名の無いモードと空の注意点は捨てる
@@ -116,12 +113,10 @@
     return (!out.capacity && !out.ranges && !modes.length && !cautions.length) ? null : out;
   }
 
-  // サーバーや保存済みの1台分を、画面で扱う形に整える(canは正本の順・知らないidは捨てる)
+  // サーバーや保存済みの1台分を、画面で扱う形に整える(古いデータにある can は捨てる)
   function normalize(a){
-    const can = Array.isArray(a && a.can) ? a.can : [];
     const out = {
       name: clean(a && a.name),
-      can: opIds().filter(id => can.indexOf(id) >= 0),
       policy: policyIds().indexOf(a && a.policy) >= 0 ? a.policy : 'optional',
       note: clean(a && a.note),
     };
@@ -141,31 +136,6 @@
     if(cls) e.className = cls;
     if(text != null) e.textContent = text;
     return e;
-  }
-
-  // 「できる操作」のチェック欄。read() はチェック済みの id(正本の順)
-  function buildOpsEditor(can, onChange){
-    const ops = el('div', 'appliance-ops');
-    ops.setAttribute('role', 'group');
-    const list = Array.isArray(can) ? can : [];
-    APPLIANCE_OPS.forEach(op => {
-      const label = el('label', 'appliance-op-label');
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.className = 'appliance-op';
-      cb.setAttribute('data-op', op.id);
-      cb.checked = list.indexOf(op.id) >= 0;
-      label.appendChild(cb);
-      label.appendChild(document.createTextNode(op.label));
-      ops.appendChild(label);
-      if(onChange) cb.addEventListener('change', onChange);
-    });
-    return {
-      el: ops,
-      read: function(){
-        return Array.prototype.filter.call(ops.querySelectorAll('.appliance-op'), c => c.checked).map(c => c.getAttribute('data-op'));
-      },
-    };
   }
 
   // 仕様(容量・モード・範囲・注意点)の編集欄。read() は整えた Spec、すべて空なら null
@@ -272,7 +242,7 @@
     const card = el('div', 'appliance-card');
     card._model = normalize(a || {});
     card._editing = false;
-    card._parts = null;                                       // 編集中だけ { name, ops, spec, note }
+    card._parts = null;                                       // 編集中だけ { name, spec, note }
     card._banner = (opts && opts.banner) || '';               // 読み取った直後などの「確認してください」の案内(保存すると消える)
     listEl.appendChild(card);
     renderCard(card);
@@ -332,19 +302,12 @@
     }
 
     const spec = m.spec || { capacity: '', modes: [], ranges: '', cautions: [] };
-    const cannot = APPLIANCE_OPS.filter(o => m.can.indexOf(o.id) < 0).map(o => o.label);
     const dl = el('dl', 'appliance-info');
-    const canRow = infoRow('できること', m.can.length ? [m.can.map(opLabel).join('、')] : []);
-    if(!m.can.length){ const dd = canRow.querySelector('dd'); dd.className = ''; dd.textContent = 'なし'; }
-    dl.appendChild(canRow);
-    const cannotRow = infoRow('できないこと', cannot.length ? [cannot.join('、')] : []);
-    if(!cannot.length){ const dd = cannotRow.querySelector('dd'); dd.className = ''; dd.textContent = 'なし'; }
-    dl.appendChild(cannotRow);
-    dl.appendChild(infoRow('容量', [spec.capacity]));
+    dl.appendChild(infoRow('補足(作れるもの・特徴)', [m.note]));
     dl.appendChild(infoRow('モード', spec.modes.map(x => x.name), spec.modes.map(x => x.desc)));
+    dl.appendChild(infoRow('容量', [spec.capacity]));
     dl.appendChild(infoRow('温度・時間などの範囲', [spec.ranges]));
     dl.appendChild(infoRow('注意点', spec.cautions));
-    dl.appendChild(infoRow('補足', [m.note]));
     card.appendChild(dl);
 
     const msg = el('p', 'appliance-msg appliance-reread-msg');
@@ -370,7 +333,6 @@
     const p = card._parts;
     return normalize({
       name: p.name.value,
-      can: p.ops.read(),
       policy: card._model.policy,
       note: p.note.value,
       spec: p.spec.read(),
@@ -394,9 +356,6 @@
     head.appendChild(rm);
     card.appendChild(head);
 
-    card.appendChild(el('span', 'appliance-label', 'できる操作(チェックのない操作は「できない」と伝えます)'));
-    const ops = buildOpsEditor(m.can, renderMeta);
-    card.appendChild(ops.el);
 
     const spec = buildSpecEditor(m.spec || null, renderMeta);
     card.appendChild(spec.el);
@@ -415,7 +374,7 @@
     actions.appendChild(done);
     card.appendChild(actions);
 
-    card._parts = { name: name, ops: ops, spec: spec, note: note };
+    card._parts = { name: name, spec: spec, note: note };
     name.addEventListener('input', renderMeta);
     note.addEventListener('input', renderMeta);
     rm.addEventListener('click', function(){ removeCard(card); });
@@ -553,15 +512,15 @@
       if(!p || typeof p !== 'object') throw new Error('読み取り結果を受け取れませんでした。もう一度お試しください。');
       const left = (typeof data.remaining === 'number') ? '(今日はあと' + data.remaining + '回読み取れます)' : '';
       if(card){
-        // 読み直し: 名前と方針は残し、できる操作・仕様・補足を読み取り結果に置き換える(保存するまでは確定しない)
+        // 読み直し: 名前と方針は残し、仕様・補足を読み取り結果に置き換える(保存するまでは確定しない)
         const old = card._model;
-        card._model = normalize({ name: old.name, policy: old.policy, can: p.can, note: p.note, spec: p.spec });
+        card._model = normalize({ name: old.name, policy: old.policy, note: p.note, spec: p.spec });
         card._editing = false; card._parts = null;
         card._banner = '読み取り直した内容です。合っているか確認して、「保存」を押してください。';
         renderCard(card);
         setMsg('読み取りました' + left, true);
       } else {
-        const created = addCard({ name: uniqueName(nameFromFile(f)), can: p.can, policy: 'optional', note: p.note, spec: p.spec },
+        const created = addCard({ name: uniqueName(nameFromFile(f)), policy: 'optional', note: p.note, spec: p.spec },
           { banner: '読み取った内容です。合っているか確認して、「保存」を押してください。名前は「編集」から直せます。' });
         if(created){
           setMsg('読み取りました' + left, true);
@@ -631,7 +590,7 @@
       if(typeof document.createElement !== 'function' || !document.head) return;
       const view = document.getElementById('view-settings');
       const adminEl = document.getElementById('admin-section');
-      if(!view || !adminEl || typeof APPLIANCE_OPS === 'undefined' || typeof APPLIANCE_SPEC_LIMITS === 'undefined') return;
+      if(!view || !adminEl || typeof APPLIANCE_SPEC_LIMITS === 'undefined') return;
 
       const style = document.createElement('style');
       style.id = 'appliances-style';
