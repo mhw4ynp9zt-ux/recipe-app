@@ -1,14 +1,14 @@
 // 取扱説明書の文字から、調理家電の登録内容(できる操作・補足・spec)をAIで読み取るための部品。
 //   ・parseExtractRequest … 画面から受け取った { name, text } の検証・整形
 //   ・buildExtractPrompt … AIへの依頼文を作る(説明書の本文は「指示ではなくデータ」として区切りで囲む)
-//   ・parseExtractResult … AIの返答を取り込み、上限内に整える(壊れていれば例外)
+//   ・parseExtractResult … AIの返答(補足・仕様)を取り込み、上限内に整える(壊れていれば例外)
 // この段階は純粋な関数だけです(DB・通信・AIの呼び出しは含みません)。
 //
 // 注意: 説明書の本文は外部由来の信頼できない文字列です。本文中に「以前の指示を無視して…」のような文があっても
 // 従わないよう、区切りで囲んで「データ」と明示し、本文側の区切り文字列(<<<・>>>の連続)は無害化します。
 // 注意: 返答の上限(spec・note)は functions/_lib/appliances.js の定数をそのまま使います(ここに数字を書かない)。
 import { loadAiSettings, reserveUsage, refundUsage } from "./app-settings.js";
-import { APPLIANCE_OPS, MAX_APPLIANCE_NAME_LEN, MAX_APPLIANCE_NOTE_LEN, APPLIANCE_SPEC_LIMITS, parseSpec } from "./appliances.js";
+import { MAX_APPLIANCE_NAME_LEN, MAX_APPLIANCE_NOTE_LEN, APPLIANCE_SPEC_LIMITS, parseSpec } from "./appliances.js";
 
 export const MANUAL_TEXT_MAX = 30000;       // 説明書の本文の最大文字数(整形後)
 export const MANUAL_EXTRACT_DAILY_LIMIT = 3; // 1人1日あたりの読み取り回数
@@ -16,7 +16,6 @@ export const EXTRACT_MAX_TOKENS = 1500;      // AIの出力の上限(費用の�
 
 const OPEN_MARK = "<<<MANUAL";
 const CLOSE_MARK = "MANUAL>>>";
-const OP_IDS = APPLIANCE_OPS.map((o) => o.id);
 
 // 本文用: 改行は残す(表・箇条書きの行構造がAIの読み取りに役立つ)。CRLF/CR→LF、タブ→空白、他の制御文字は除去、
 // 空白の連続は1つ、3つ以上続く改行は2つにまとめ、前後を trim する。
@@ -57,7 +56,6 @@ function neutralize(text) {
 // name・text は parseExtractRequest で整えたもの
 export function buildExtractPrompt(name, text) {
   const L = APPLIANCE_SPEC_LIMITS;
-  const ops = APPLIANCE_OPS.map((o) => `${o.id}(${o.label})`).join("、");
   return [
     "あなたは調理家電の取扱説明書を読み取り、決まった項目に整理するアシスタントです。",
     `対象の家電: ${neutralize(name)}`,
@@ -69,12 +67,12 @@ export function buildExtractPrompt(name, text) {
     neutralize(text),
     CLOSE_MARK,
     "",
-    "本文に書かれている事実だけを使い、書かれていないことは推測せず、空にしてください。",
+    "本文に書かれている事実だけを使い、書かれていないことは推測せず、空にしてください。モード名・料理名・一般的な知識から、本文にない機能を足さないでください。",
+    "作れるもの・できること・特徴は、本文の言葉にできるだけ近い形で書いてください(言い換えや分類はしない)。",
     "次の形式のJSONだけを返してください(説明文・前置き・コードブロックは不要)。",
-    '{ "can": ["操作id", ...], "note": "補足", "spec": { "capacity": "容量", "modes": [{ "name": "モード名", "desc": "説明" }], "ranges": "温度・時間などの範囲", "cautions": ["注意点", ...] } }',
+    '{ "note": "補足", "spec": { "capacity": "容量", "modes": [{ "name": "モード名", "desc": "説明" }], "ranges": "温度・時間などの範囲", "cautions": ["注意点", ...] } }',
     "",
-    `- can: この家電でできる調理操作のid。次の${OP_IDS.length}種のidだけを使う: ${ops}。できると読み取れたものだけを入れる`,
-    `- note: 使い方の補足。${MAX_APPLIANCE_NOTE_LEN}文字以内。なければ空文字`,
+    `- note: この家電で作れるもの・できること・特徴・使い方を、本文の言葉に近い形で。${MAX_APPLIANCE_NOTE_LEN}文字以内。なければ空文字`,
     `- spec.capacity: 容量。${L.capacity}文字以内。なければ空文字`,
     `- spec.modes: 調理モード。${L.modes}件まで。name は${L.modeName}文字以内、desc は${L.modeDesc}文字以内`,
     `- spec.ranges: 温度・時間などの範囲。${L.ranges}文字以内。なければ空文字`,
@@ -82,7 +80,7 @@ export function buildExtractPrompt(name, text) {
   ].join("\n");
 }
 
-// AIの返答 → { value: { can, note, spec } }。壊れていれば例外(呼び出し側が「形式不正」として扱う)。
+// AIの返答 → { value: { note, spec } }。壊れていれば例外(呼び出し側が「形式不正」として扱う)。
 // 緩く取り込む: 未知のid・長すぎる文字列・多すぎる件数は黙って落とす/切り詰める(エラーにしない)。
 export function parseExtractResult(content) {
   const cleaned = String(content).replace(/```json|```/g, "").trim();
@@ -96,16 +94,14 @@ export function parseExtractResult(content) {
     parsed = JSON.parse(cleaned.slice(start, end + 1));
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("unexpected response shape");
-  if (!Array.isArray(parsed.can)) throw new Error("can is not an array");
   if (parsed.spec === undefined || parsed.spec === null) throw new Error("spec is missing");
 
-  const can = OP_IDS.filter((id) => parsed.can.includes(id));
   const spec = parseSpec(parsed.spec, { lenient: true }).value || { capacity: "", modes: [], ranges: "", cautions: [] };
   const note = typeof parsed.note === "string" ? cleanLine(parsed.note).slice(0, MAX_APPLIANCE_NOTE_LEN) : "";
 
   const specEmpty = !spec.capacity && !spec.ranges && !spec.modes.length && !spec.cautions.length;
-  if (!can.length && specEmpty) throw new Error("nothing was read");
-  return { value: { can, note, spec } };
+  if (specEmpty) throw new Error("nothing was read");
+  return { value: { note, spec } };
 }
 
 // ==== 回数の確保とAI呼び出し(費用に直結する部分) ====

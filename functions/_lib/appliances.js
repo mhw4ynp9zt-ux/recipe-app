@@ -1,11 +1,12 @@
 // ユーザーごとの「使っている調理家電」(設定タブで登録し、レシピ作成のたびに自動でAIの条件に加わる)。
-//   例: レコルトの自動調理ポット(できる操作: 煮る・粉砕・自動で混ぜる / できない操作: 炒める・焼く など)
+//   例: レコルトの自動調理ポット(説明書から読み取った補足・モード・容量・範囲・注意)
 //   ・parseAppliances … 画面から受け取った一覧の検証・整形
 //   ・loadAppliances / saveAppliances … D1(user_settings テーブルの appliances 列)への読み書き
 //
-// 1台の形: { name, can: [操作id...], policy, note, spec? }
+// 1台の形: { name, policy, note, spec? }
+//   ・調理ジャンル(炒める・茹でる…の「できる操作」チェック)は持ちません。古い保存データに can があっても読み飛ばします(次の保存で消えます)。
 //   ・spec は取扱説明書から取り込んだ仕様(空なら項目ごと無い): { capacity, modes: [{name, desc}], ranges, cautions: [文字列] }
-//   ・can にチェックされていない操作は、プロンプトで「できない操作」として伝える(functions/_lib/recipe-prompt.js)
+//   ・レシピ作成のAIには、補足と spec(説明書の言葉)をそのまま伝え、そこに書かれていない調理は手順に書かせない(functions/_lib/recipe-prompt.js)
 //   ・policy は、その家電を使うかどうかの方針(下の APPLIANCE_POLICIES)
 //
 // 【説明書PDFからのみ登録】画面からの保存(PUT)は parseAppliances(..., { requireSpec: true }) で検証し、
@@ -16,18 +17,8 @@
 // (長い文章を書き込んでAIの中継として悪用されるのを防ぐ。「使わない食材」・マイキッチンと同じ考え方)。
 // 守られたかどうかはコードでは判定できないため、守られなかったときの自動の作り直しはしません
 // (判定を足すとAIの呼び出しが増え、費用に直結するため。MAX_ATTEMPTS / MAX_AI_CALLS は変わりません)。
-// 注意: APPLIANCE_OPS / APPLIANCE_POLICIES / APPLIANCE_SPEC_LIMITS は js/config.js と同じ内容に保ってください(test/appliances_test.mjs が一致を確認します)。
+// 注意: APPLIANCE_POLICIES / APPLIANCE_SPEC_LIMITS は js/config.js と同じ内容に保ってください(test/appliances_test.mjs が一致を確認します)。
 
-export const APPLIANCE_OPS = [
-  { id: "stir_fry", label: "炒める" },
-  { id: "sear", label: "焼く" },
-  { id: "simmer", label: "煮る・茹でる" },
-  { id: "steam", label: "蒸す" },
-  { id: "deep_fry", label: "揚げる" },
-  { id: "blend", label: "粉砕・攪拌" },
-  { id: "auto_stir", label: "自動で混ぜる" },
-  { id: "hold", label: "保温・低温調理" },
-];
 export const APPLIANCE_POLICIES = [
   { id: "optional", label: "使えるときだけ使う" },
   { id: "prefer", label: "できるだけ使う" },
@@ -42,7 +33,6 @@ export const APPLIANCE_SPEC_LIMITS = { capacity: 20, modes: 6, modeName: 16, mod
 // 説明書の内容(spec)が無い家電を保存しようとしたときの案内(画面側 js/appliances.js も同じ趣旨の文を出す)
 export const SPEC_REQUIRED_ERROR = "説明書から読み取った内容がありません。説明書PDFから追加してください";
 
-const OP_IDS = APPLIANCE_OPS.map((o) => o.id);
 const POLICY_IDS = APPLIANCE_POLICIES.map((p) => p.id);
 const SHAPE_ERROR = "調理家電の形式が不正です";
 
@@ -131,8 +121,8 @@ export function parseSpec(input, opts = {}) {
   return { value: { capacity: capacity.value, modes, ranges: ranges.value, cautions } };
 }
 
-// 成功: { value: [{ name, can, policy, note, spec? }, ...] } / 失敗: { error }
-// can は APPLIANCE_OPS の順に並べ直し、重複は除く。policy 省略は "optional"。同じ名前(表記ゆれ含む)は最初の1台だけ残す。
+// 成功: { value: [{ name, policy, note, spec? }, ...] } / 失敗: { error }
+// can が送られてきても無視する(保存しない)。policy 省略は "optional"。同じ名前(表記ゆれ含む)は最初の1台だけ残す。
 // 全部消して保存(空配列)もできる。
 // opts.requireSpec: true のとき、説明書から読み取った内容(spec)が無い家電はエラー(画面からの保存用)。既定は false(保存済みデータの読み込み用)。
 export function parseAppliances(input, opts = {}) {
@@ -156,14 +146,6 @@ export function parseAppliances(input, opts = {}) {
       return { error: `補足「${note.slice(0, 8)}…」は長すぎます(${MAX_APPLIANCE_NOTE_LEN}文字まで)` };
     }
 
-    let can = [];
-    if (raw.can !== undefined) {
-      if (!Array.isArray(raw.can) || raw.can.some((id) => typeof id !== "string" || !OP_IDS.includes(id))) {
-        return { error: "調理家電の「できる操作」の形式が不正です" };
-      }
-      can = OP_IDS.filter((id) => raw.can.includes(id));
-    }
-
     let policy = "optional";
     if (raw.policy !== undefined) {
       if (typeof raw.policy !== "string" || !POLICY_IDS.includes(raw.policy)) {
@@ -179,7 +161,7 @@ export function parseAppliances(input, opts = {}) {
     const key = dedupeKey(name);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(spec.value ? { name, can, policy, note, spec: spec.value } : { name, can, policy, note });
+    out.push(spec.value ? { name, policy, note, spec: spec.value } : { name, policy, note });
   }
   if (out.length > MAX_APPLIANCES) return { error: `登録できるのは${MAX_APPLIANCES}台までです` };
   return { value: out };
