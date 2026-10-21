@@ -1,6 +1,6 @@
 import { GENRES, ROLES } from "./taxonomy.js";
 import { APPLIANCE_POLICIES, parseSpec } from "./appliances.js";
-import { capacityLimits } from "./appliance-capacity.js";
+import { capacityLimits, usesLimitedAppliance } from "./appliance-capacity.js";
 
 // レシピ作成のリクエスト検証・プロンプト組み立て・AIの返答の検証(すべてサーバー側)。
 // ブラウザからは「食材・雰囲気・品数・栄養目標」だけを受け取り、プロンプトはここで組み立てます。
@@ -491,8 +491,7 @@ function buildPrompt(req) {
 // 縮める品の材料(hit.scaled にある名前のもの)の寄与を、hit.factor の割合に減らす。目標から外れる指標だけを返す。
 // 縮めたことで変わる指標だけを対象にする(もともとの過不足は、作り直しの本文の【前回の計算結果】が伝える)。
 // 返り値: [{ label, unit, now, projected, target, gap }](gap = 目標 - 見込み。正なら不足)
-function projectAfterScaling(dishes, check, capHits) {
-  if (!capHits.length || !check || !Array.isArray(check.results)) return [];
+function lostByScaling(dishes, capHits) {
   const lost = {};
   for (const h of capHits) {
     const dish = dishes && dishes[h.dishIndex];
@@ -504,6 +503,12 @@ function projectAfterScaling(dishes, check, capHits) {
       for (const [id, v] of Object.entries(ing.contrib)) lost[id] = (lost[id] || 0) + (Number(v) || 0) * (1 - f);
     }
   }
+  return lost;
+}
+
+function projectAfterScaling(dishes, check, capHits) {
+  if (!capHits.length || !check || !Array.isArray(check.results)) return [];
+  const lost = lostByScaling(dishes, capHits);
   const out = [];
   for (const r of check.results) {
     const projected = Math.round((r.total - (lost[r.id] || 0)) * 10) / 10;
@@ -511,6 +516,64 @@ function projectAfterScaling(dishes, check, capHits) {
     if (lost[r.id] > 0 && Math.abs(gap) > r.target * AIM_TOLERANCE) out.push({ label: r.label, unit: r.unit, now: r.total, projected, target: r.target, gap });
   }
   return out;
+}
+
+// 栄養の調整案(AIは呼ばない。attachNutrition 済みの contrib から計算)。
+// AIは「あと〇〇g増やす」を暗算するのが苦手で、行き過ぎ・不足を繰り返すため、どの材料を何gにすればよいかをこちらで計算して渡す。
+//   ・触ってよいのは、容量のある家電を使わない品の材料(容量を超えた品は縮めた量で固定、容量のある家電の品は触らない)
+//   ・材料ごとに「いちばん寄与の大きい指標」を決め(目標に対する割合で比較)、その指標が目標から外れていれば、同じ指標の材料をまとめて同じ倍率で増減する
+//   ・縮めた量(capHits)の影響も、基準の合計に含める
+// 返り値: { lines: [文], expected: [{ label, unit, value, target }] } か、調整の必要がなければ null
+function suggestAdjustments(req, dishes, check, capHits = []) {
+  if (!check || !Array.isArray(check.results) || !Array.isArray(dishes) || !check.results.length) return null;
+  const apps = appliancesOf(req);
+  const hitIdx = new Set(capHits.map((h) => h.dishIndex));
+  const lost = lostByScaling(dishes, capHits);
+  const base = {};
+  for (const r of check.results) base[r.id] = r.total - (lost[r.id] || 0);
+  const target = Object.fromEntries(check.results.map((r) => [r.id, r.target]));
+  const off = check.results.filter((r) => Math.abs(base[r.id] - r.target) > r.target * AIM_TOLERANCE);
+  if (!off.length) return null;
+
+  // 触ってよい材料を、いちばん寄与の大きい指標ごとに集める
+  const groups = {};
+  dishes.forEach((d, di) => {
+    if (hitIdx.has(di) || usesLimitedAppliance(d, apps) || !Array.isArray(d.ingredientDetails)) return;
+    d.ingredientDetails.forEach((ing) => {
+      if (!ing || !ing.contrib || !(ing.grams > 0)) return;
+      const rel = check.results.map((r) => [r.id, (Number(ing.contrib[r.id]) || 0) / (target[r.id] || 1)]);
+      const sum = rel.reduce((a, [, v]) => a + v, 0);
+      const [domId, domV] = rel.reduce((a, b) => (b[1] > a[1] ? b : a), [null, 0]);
+      if (!domId || !(domV > 0) || domV < 0.6 * sum) return;
+      (groups[domId] ||= []).push({ di, ing });
+    });
+  });
+
+  const factorOf = new Map(); // ing -> 倍率
+  for (const r of off) {
+    const g = groups[r.id] || [];
+    const c = g.reduce((a, x) => a + (Number(x.ing.contrib[r.id]) || 0), 0);
+    if (!(c > 0)) continue;
+    const f = Math.min(2, Math.max(0.3, 1 + (r.target - base[r.id]) / c));
+    for (const x of g) factorOf.set(x.ing, f);
+  }
+  if (!factorOf.size) return null;
+
+  const byDish = new Map();
+  const expectedTotals = { ...base };
+  for (const [ing, f] of factorOf) {
+    const next = Math.max(5, Math.round((ing.grams * f) / 5) * 5);
+    if (Math.abs(next - ing.grams) < 5) continue;
+    const ratio = next / ing.grams;
+    for (const [id, v] of Object.entries(ing.contrib)) if (id in expectedTotals) expectedTotals[id] += (Number(v) || 0) * (ratio - 1);
+    const di = dishes.findIndex((d) => Array.isArray(d.ingredientDetails) && d.ingredientDetails.includes(ing));
+    if (!byDish.has(di)) byDish.set(di, []);
+    byDish.get(di).push(ing.name + ' ' + fmtNum(ing.grams) + 'g → ' + fmtNum(next) + 'g');
+  }
+  if (!byDish.size) return null;
+  const lines = [...byDish.entries()].sort((a, b) => a[0] - b[0]).map(([di, list]) => '・' + (di + 1) + '品目「' + dishes[di].name + '」: ' + list.join('、'));
+  const expected = check.results.map((r) => ({ label: r.label, unit: r.unit, value: Math.round(expectedTotals[r.id] * 10) / 10, target: r.target }));
+  return { lines, expected };
 }
 
 // 目標の許容範囲(±TOLERANCE)から外れたとき、または使わない食材が含まれていたときに、AIへ送る「作り直し」の依頼文。
@@ -531,6 +594,18 @@ function buildRetryPrompt(req, dishes, check, hits = [], capHits = []) {
       'これらはユーザーが「使わない」と登録した食材です。前回のレシピの料理名・材料(関連する部位・加工品も)から、すべて取り除いてください。\n\n'
     : '';
   const projection = projectAfterScaling(dishes, check, capHits);
+  // 容量のある家電を登録していない人の作り直し文は、これまでと同じにする(調整案は容量のある家電があるときだけ)
+  const hasCapLimit = capacityLimits(appliancesOf(req)).length > 0;
+  const adjust = hasCapLimit ? suggestAdjustments(req, dishes, check, capHits) : null;
+  const adjustText = adjust
+    ? '【調整案】(こちらで計算した値。この量にそろえて書くと、合計が目標に近づく見込みです)\n' + adjust.lines.join('\n') + '\n' +
+      '・この調整案どおりにしたときの合計の見込み: ' + adjust.expected.map((e) => e.label + ' ' + fmtNum(e.value) + e.unit + '(目標' + fmtNum(e.target) + e.unit + ')').join('、') + '\n\n'
+    : '';
+  // 容量のある家電があるときは、前回が容量内でも、作り直しのたびに伝える(伝えないと、栄養を直すうちに再び超えるため)
+  const capLimits = capacityLimits(appliancesOf(req));
+  const capAlways = capLimits.length && !capHits.length
+    ? '・家電の容量の最大(' + capLimits.map((l) => '「' + l.name + '」' + l.maxMl + 'ml').join('、') + ')は、栄養を直すときも必ず守る。その家電に入れる材料(水・液体を含む)は増やさず、栄養は、その家電を使わない他の品の材料で調整する。\n'
+    : '';
   const capText = capHits.length
     ? '【家電の容量を超えていました】\n' +
       capHits.map((h) => '・「' + h.dish + '」: 「' + h.appliance + '」に入れる材料が約' + h.volumeMl + 'ml(最大' + h.maxMl + 'ml。あと約' + (h.volumeMl - h.maxMl) + 'ml減らす)' +
@@ -564,7 +639,7 @@ function buildRetryPrompt(req, dishes, check, hits = [], capHits = []) {
 
   // 目標は許容範囲に収まっていて、使わない食材だけを直したいとき
   if (!off.length) {
-    return hitText + capText +
+    return hitText + capText + adjustText +
       '栄養量を成分表から計算したところ、前回の合計は目標の±' + pct + '%の許容範囲に収まっていました。\n\n' +
       '【やり直しのお願い】\n' +
       (hits.length ? '・上の食材を取り除き、別の食材に置き換えて作り直してください。置き換えたあとも、すべての目標が目標値の±' + aimPct + '%以内に入るよう、材料の grams を調整してください。\n'
@@ -576,6 +651,7 @@ function buildRetryPrompt(req, dishes, check, hits = [], capHits = []) {
       notesKeep +
       appliancesKeep +
       capKeep +
+      capAlways +
       dishKeep +
       '・「必ず守る条件」と出力形式は最初の依頼のとおりです。JSON配列のみを出力し、前置き・コードブロック記号はつけないでください。';
   }
@@ -615,8 +691,9 @@ function buildRetryPrompt(req, dishes, check, hits = [], capHits = []) {
   return hitText + capText +
     '栄養量をこちらで日本食品標準成分表から計算したところ、目標の±' + pct + '%の許容範囲に収まっていませんでした。\n\n' +
     '【前回の計算結果と、直す向き】\n' + summary + '\n\n' +
-    '【範囲を外れた栄養素の、食材ごとの内訳】\n' + detail + unmatchedText + '\n\n' +
+    '【範囲を外れた栄養素の、食材ごとの内訳】\n' + detail + unmatchedText + '\n\n' + adjustText +
     '【やり直しのお願い】\n' +
+    (adjust ? '・【調整案】がある場合は、その量にそろえて書く(こちらで計算した値)。調整案にない材料は今のままにする。\n' : '') +
     '・上の「直す向き」と内訳をもとに、材料の grams を増減して、すべての目標が目標値の±' + aimPct + '%以内(狙う範囲)に入るように作り直してください。目標との差が±' + aimPct + '%を超える場合は、分量を調整してから出力すること。\n' +
     '・ある栄養素の調整は他の栄養素にも影響します。範囲内だった栄養素が外れないよう、全体を計算し直してください。\n' +
     '・料理の方向性はできるだけ保ち、重さの調整で足りないときに限って、食材の追加・入れ替えをしてください。\n' +
@@ -626,6 +703,7 @@ function buildRetryPrompt(req, dishes, check, hits = [], capHits = []) {
     notesKeep +
     appliancesKeep +
     capKeep +
+    capAlways +
     dishKeep +
     '・「必ず守る条件」と出力形式は最初の依頼のとおりです。JSON配列のみを出力し、前置き・コードブロック記号はつけないでください。';
 }
@@ -721,4 +799,4 @@ function parseDishes(content, req) {
   });
 }
 
-export { MAX_MINUTES_OPTIONS, EFFORT_LEVELS, parseCreateRequest, buildPrompt, buildRetryPrompt, checkTargets, maxTokensFor, parseDishes, TOLERANCE, AIM_TOLERANCE };
+export { suggestAdjustments, MAX_MINUTES_OPTIONS, EFFORT_LEVELS, parseCreateRequest, buildPrompt, buildRetryPrompt, checkTargets, maxTokensFor, parseDishes, TOLERANCE, AIM_TOLERANCE };

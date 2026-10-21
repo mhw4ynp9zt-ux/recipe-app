@@ -138,3 +138,8 @@ export function capacityLimits(appliances) {
   }
   return out;
 }
+
+// その品が、容量のある家電(容量が読み取れる家電)を使うか。栄養の調整で量を触ってよい品かを決めるために使う
+export function usesLimitedAppliance(dish, appliances) {
+  return (Array.isArray(appliances) ? appliances : []).some((a) => a && a.spec && parseCapacityMl(a.spec.capacity) && usesAppliance(dish, a));
+}
