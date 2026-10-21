@@ -104,7 +104,7 @@ const POT = { name: "レコルト 調理ポット", policy: "optional", note: ""
 const baseReq = { ingredients: "", mood: "", count: 1, metrics: [{ id: "protein", label: "たんぱく質", unit: "g", target: 78 }] };
 {
   const p = buildPrompt({ ...baseReq, appliances: [POT] });
-  assert.match(p, /最大600mlまで/); assert.match(p, /"appliance"/); assert.match(p, /"applianceMl"/);
+  assert.match(p, /最大600mlまで/); assert.match(p, /栄養の目標よりも優先して守る/); assert.match(p, /"appliance"/); assert.match(p, /"applianceMl"/);
   const p0 = buildPrompt({ ...baseReq, appliances: [] });
   assert.doesNotMatch(p0, /"appliance"/); assert.doesNotMatch(p0, /最大\d+mlまで/);
   const pNoCap = buildPrompt({ ...baseReq, appliances: [{ ...POT, spec: { ...POT.spec, capacity: "" } }] });
@@ -126,6 +126,7 @@ const baseReq = { ingredients: "", mood: "", count: 1, metrics: [{ id: "protein"
   const hits = findCapacityHits([bigSoup], [POT]);
   const r = buildRetryPrompt({ ...baseReq, appliances: [POT] }, [bigSoup], check, [], hits);
   assert.match(r, /家電の容量を超えていました/); assert.match(r, /最大600ml/); assert.match(r, /きのこたっぷり彩りポタージュ/);
+  assert.match(r, /栄養の目標よりも優先します/); assert.match(r, /他の品の材料の grams を増減/);
   assert.match(r, /あと約6\d\dml減らす/); assert.match(r, /量の多い材料: .*ブロッコリー 250ml相当/);
   const r0 = buildRetryPrompt({ ...baseReq, appliances: [POT] }, [bigSoup], check, [], []);
   assert.doesNotMatch(r0, /家電の容量を超えていました/);
