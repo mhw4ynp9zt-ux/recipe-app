@@ -201,7 +201,16 @@ function parseCreateRequest(body) {
     if (effortLevel === undefined) effortLevel = body.effortLevel;
   }
 
+  // 登録した調理家電を使うか(画面のスイッチ)。受け取るのは「使わない(false)」という意思だけ。
+  // 家電の中身は画面からは受け取らず、使う場合も、サーバーが保存済みの本人の分だけを読む。boolean 以外は不正。無い(未指定)なら従来どおり使う
+  let useAppliances;
+  if (body.useAppliances !== undefined && body.useAppliances !== null) {
+    if (typeof body.useAppliances !== "boolean") return { error: "調理家電の使用の指定が不正です" };
+    if (body.useAppliances === false) useAppliances = false;
+  }
+
   const value = { ingredients, mood, count, metrics };
+  if (useAppliances === false) value.useAppliances = false;
   if (dishes) value.dishes = dishes;
   if (maxMinutes !== undefined) value.maxMinutes = maxMinutes;
   if (effortLevel !== undefined) value.effortLevel = effortLevel;

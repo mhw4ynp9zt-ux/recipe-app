@@ -362,6 +362,67 @@
     removeOldTimePanel();
     for(let n = 1; n <= MAX_EFFORT_DISHES; n++) ensureEffortChips(n);
   }
+  // 「調理家電を使う/使わない」のスイッチ(「生成のたびに選ぶ」。選択はこの端末に記憶、初期は「使う」)。
+  // 設定タブに家電が登録されているログイン中だけ、「レシピを作成する」の上に出す(js/appliances.js の通知で出し分け)。
+  // 送るのは「使わない(useAppliances:false)」の意思だけ。家電の中身は送らず、サーバーが保存済みの本人の分を読む。
+  // スイッチが画面に出ていないとき(未登録・ログアウト・古い画面)は何も送らず、従来どおり。失敗しても作成そのものは止めない。
+  const USE_APPLIANCES_KEY = 'recipeRouletteUseAppliancesV1';
+  let useAppliances = true;
+  try { useAppliances = localStorage.getItem(USE_APPLIANCES_KEY) !== '0'; } catch(e){ /* 読めなければ「使う」 */ }
+  let applianceSwitchEl = null;
+  function renderApplianceSwitch(){
+    if(!applianceSwitchEl) return;
+    const btns = applianceSwitchEl.querySelectorAll('.appliance-use-btn');
+    btns.forEach(b => {
+      const on = (b.dataset.use === '1') === useAppliances;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    const hint = applianceSwitchEl.querySelector('.appliance-use-hint');
+    if(hint) hint.textContent = useAppliances
+      ? '設定タブに登録した調理家電でできる作り方で考えます。'
+      : '登録した調理家電は使わず、コンロやフライパンなどで作れる作り方で考えます。';
+  }
+  function ensureApplianceSwitch(){
+    try {
+      if(applianceSwitchEl) return;
+      const area = document.querySelector('.generate-area');
+      if(!area || !area.parentNode || typeof area.insertAdjacentHTML !== 'function') return;
+      area.insertAdjacentHTML('beforebegin',
+        '<section class="panel step" id="appliance-use-panel" hidden>' +
+          '<div class="step-head"><h2>調理家電</h2><span class="step-tag">任意</span></div>' +
+          '<div class="count-toggle" role="group" aria-label="調理家電を使うか">' +
+            '<button type="button" class="toggle-btn appliance-use-btn" data-use="1">使う</button>' +
+            '<button type="button" class="toggle-btn appliance-use-btn" data-use="0">使わない</button>' +
+          '</div>' +
+          '<p class="input-hint appliance-use-hint" aria-live="polite"></p>' +
+        '</section>');
+      applianceSwitchEl = document.getElementById('appliance-use-panel');
+      if(!applianceSwitchEl) return;
+      applianceSwitchEl.addEventListener('click', (e) => {
+        const btn = e.target.closest && e.target.closest('.appliance-use-btn');
+        if(!btn) return;
+        useAppliances = btn.dataset.use === '1';
+        try { localStorage.setItem(USE_APPLIANCES_KEY, useAppliances ? '1' : '0'); } catch(err){ /* 記憶できないだけ */ }
+        renderApplianceSwitch();
+      });
+      renderApplianceSwitch();
+    } catch(e){ applianceSwitchEl = null; }
+  }
+  function applianceSwitchVisible(){
+    return !!applianceSwitchEl && !applianceSwitchEl.hidden;
+  }
+  function updateApplianceSwitchVisibility(){
+    try {
+      ensureApplianceSwitch();
+      if(!applianceSwitchEl) return;
+      const count = typeof window.getSavedApplianceCount === 'function' ? window.getSavedApplianceCount() : 0;
+      applianceSwitchEl.hidden = !(isLoggedIn() && count > 0);
+    } catch(e){ /* 出し分けできなくても、作成そのものは止めない */ }
+  }
+  document.addEventListener('appliances-changed', updateApplianceSwitchVisibility);
+  updateApplianceSwitchVisibility();
+
   // チップの行(i番目が i+1品目。カードが無ければ null)。チップが画面にある品の指定だけを送る
   const effortRowEls = [];
   for(let i = 0; i < MAX_EFFORT_DISHES; i++) effortRowEls.push(effortAvailable ? document.getElementById('effort-row-' + (i + 1)) : null);
@@ -846,6 +907,11 @@
         logContext.request.dishes = body.dishes;
         // ジョブの控え(logContext.request)にも入れ、開き直した後の超過判定でも使う
         if(dishEfforts.some(v => v !== null)) logContext.request.dishEfforts = dishEfforts;
+      }
+      // 調理家電のスイッチが画面にあり「使わない」のときだけ送る(出ていないとき・「使う」のときは従来どおり何も付けない)
+      if(applianceSwitchVisible() && !useAppliances){
+        body.useAppliances = false;
+        logContext.request.useAppliances = false;
       }
       const requestBody = JSON.stringify(body);
       // ジョブを作るだけの短い要求(AIは呼ばれない)。応答が返る前に通信が切れた場合(iOS Safariでは TypeError "Load failed")だけ、
