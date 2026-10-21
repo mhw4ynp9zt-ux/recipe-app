@@ -1,4 +1,4 @@
-// 保存済み一覧のカードに、検索条件に関わらず7つの栄養素を常に表示する画面テスト(Playwright)。
+// 保存済みレシピの詳細シートに、検索条件に関わらず7つの栄養素を常に表示する画面テスト(Playwright)。
 // 【重要】実際のAI(xAI・有料)も、外部サイトも呼びません。
 //   ・ページは、このテストが立てる 127.0.0.1 のローカルサーバーから配る
 //   ・ブラウザの全通信を route で横取りし、/api/* は偽の応答、127.0.0.1 以外は遮断して件数を数える → 外部通信・AI系通信は0件を assert
@@ -60,10 +60,15 @@ try {
   await page.evaluate(() => { const t = document.querySelector('[data-tab="saved"], #tab-saved'); if (t) t.click(); });
   await page.waitForTimeout(300);
 
-  const macro = async (name) => page.$$eval(".saved-card", (cards, n) => {
-    const c = cards.find((x) => x.querySelector("h2").textContent.trim() === n);
-    return c ? c.querySelector(".saved-macro").textContent.trim() : null;
-  }, name);
+  // 一覧はタイル表示。7指標は、タイルをタップして開く詳細シートに出る
+  const macro = async (name) => {
+    const id = await page.$$eval("#saved-list .saved-tile", (tiles, n) => { const t = tiles.find((x) => x.querySelector(".saved-tile-title").textContent.trim() === n); return t ? t.dataset.id : null; }, name);
+    if (!id) return null;
+    await page.click('#saved-list .saved-tile[data-id="' + id + '"]');
+    const text = (await page.$$eval("#saved-detail-panel .saved-nutri", (els) => els.map((e) => e.querySelector("dt").textContent.trim() + " " + e.querySelector("dd").textContent.trim()))).join(" / ");
+    await page.keyboard.press("Escape");
+    return text;
+  };
 
   const a = await macro("テスト用パン");
   assert.ok(a, "カードが表示される");
@@ -82,6 +87,7 @@ try {
   ok("値を持たない古い保存データでも、7指標の項目は常に出る(無い値は「ー」、0は0g)");
 
   // 検索・条件クリアで絞り込んでも7指標のまま
+  await page.click("#saved-search-toggle");
   await page.fill("#saved-search-input", "パン");
   await page.waitForTimeout(200);
   const d = await macro("テスト用パン");

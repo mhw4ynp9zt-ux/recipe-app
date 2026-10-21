@@ -19,6 +19,8 @@
 <link rel="stylesheet" href="css/style.css">
 <!-- デザインテーマ(B-1 ミルクティー)。見た目だけを上書きします。元に戻すときは、この1行を消すだけです -->
 <link rel="stylesheet" href="css/theme-b1.css">
+<!-- 保存済みタブ(タイル表示・絞り込みシート・詳細シート)。テーマの色を使います -->
+<link rel="stylesheet" href="css/saved.css">
 </head>
 <body>
 <div class="app">
@@ -139,7 +141,13 @@
 
   <!-- ===== 保存済み ===== -->
   <main id="view-saved" role="tabpanel" aria-labelledby="tab-saved" hidden>
-    <h2 class="view-title">保存したレシピ</h2>
+    <div class="saved-head">
+      <h2 class="view-title">保存したレシピ</h2>
+      <span class="saved-total" id="saved-total" hidden></span>
+      <button type="button" class="saved-search-toggle" id="saved-search-toggle" aria-label="検索" aria-expanded="false" aria-controls="saved-search" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+      </button>
+    </div>
     <div id="saved-empty" class="empty-state">
       <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M8 32h48a24 24 0 0 1-48 0Z"/><path d="M24 22c0-4 3-5 3-9M36 22c0-4 3-5 3-9"/></svg>
       <p class="empty-title">まだ保存したレシピがありません</p>
@@ -228,6 +236,7 @@
 <script src="js/recipe-classify.js"></script>
 <script src="js/error-log.js"></script>
 <script src="js/save.js"></script>
+<script src="js/saved-sheet.js"></script>
 <script src="js/saved-filter.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/settings.js"></script>

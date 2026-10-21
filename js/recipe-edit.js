@@ -5,7 +5,7 @@
 //
 //  ・renderEditorHtml(state) は state だけから HTML 文字列を作る純粋な関数です(DOMに触れない)。
 //    利用者の入力(料理名・食材名・作り方・エラー文)は、すべて escapeSavedHtml で無害化します。
-//  ・シートと「自作レシピを作る」ボタン(#new-recipe-btn)は、読み込み時にここで差し込みます(index.html は変更不要)。
+//  ・シートと「自作レシピを作る」ボタン(保存済み画面の右下の＋。#new-recipe-btn)は、読み込み時にここで差し込みます。
 //  ・保存に成功したらシートを閉じます(編集の種類・対象は保存後に変わらないため、開いたままだと二重保存になる)。
 //  ・通信は core が行います(AIは呼びません。calc / PUT / custom だけ)。
 
@@ -324,12 +324,20 @@ async function runRecipeSave(kind){
 function setupRecipeEditUi(){
   const emptyEl = document.getElementById('saved-empty');
   if(!emptyEl || document.getElementById('recipe-edit-sheet')) return;
-  emptyEl.insertAdjacentHTML('beforebegin', `
-    <div class="new-recipe-box">
-      <button type="button" class="btn btn-secondary" id="new-recipe-btn" disabled>自作レシピを作る</button>
-      <p class="edit-login-hint" id="new-recipe-hint">ログインすると編集できます</p>
-    </div>
-  `);
+  // 「自作レシピを作る」は、保存済み画面の右下の「＋」ボタン。未ログインのときは押せず、タイトル行の下に理由を出す
+  const savedView = document.getElementById('view-saved');
+  const head = savedView ? savedView.querySelector('.saved-head') : null;
+  const fabHtml = `
+    <button type="button" class="new-recipe-fab" id="new-recipe-btn" aria-label="自作レシピを作る" disabled>
+      <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    </button>`;
+  const hintHtml = '<p class="edit-login-hint saved-login-hint" id="new-recipe-hint">ログインすると、自作・編集ができます</p>';
+  if(savedView && head){
+    head.insertAdjacentHTML('afterend', hintHtml);
+    savedView.insertAdjacentHTML('beforeend', fabHtml);
+  } else {
+    emptyEl.insertAdjacentHTML('beforebegin', '<div class="new-recipe-box">' + fabHtml + hintHtml + '</div>');
+  }
   document.body.insertAdjacentHTML('beforeend', `
     <div id="recipe-edit-sheet" class="recipe-edit-sheet" role="dialog" aria-modal="true" aria-label="レシピの編集" hidden>
       <div id="recipe-edit-body" class="re-body"></div>

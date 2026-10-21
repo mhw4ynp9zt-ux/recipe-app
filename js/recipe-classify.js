@@ -155,3 +155,28 @@ function facetCounts(recipes, filters, axis, textMatch) {
   });
   return counts;
 }
+
+// ---- 並べ替え ----
+
+// 保存済み一覧の並べ替え。recipes は保存した順(古い→新しい)のまま渡す。元の配列は変えない。
+//   'new'      … 新しく保存したものが先(既定)
+//   'protein'  … たんぱく質が多い順
+//   'cal-asc'  … カロリーが低い順 / 'cal-desc' … カロリーが高い順
+// 栄養値のないレシピは最後に回す。同じ値のときは、新しく保存したものが先。
+function sortRecipes(recipes, sortId) {
+  const newestFirst = (Array.isArray(recipes) ? recipes : []).slice().reverse();
+  const key = sortId === 'protein' ? { id: 'protein', dir: -1 }
+    : sortId === 'cal-asc' ? { id: 'calories', dir: 1 }
+    : sortId === 'cal-desc' ? { id: 'calories', dir: -1 }
+    : null;
+  if (!key) return newestFirst;
+  return newestFirst
+    .map((recipe, i) => ({ recipe, i, v: nutritionValue(recipe, key.id) }))
+    .sort((a, b) => {
+      if (a.v === null && b.v === null) return a.i - b.i;
+      if (a.v === null) return 1;
+      if (b.v === null) return -1;
+      return (a.v - b.v) * key.dir || a.i - b.i;
+    })
+    .map((x) => x.recipe);
+}

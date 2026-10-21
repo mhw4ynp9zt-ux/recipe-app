@@ -3,7 +3,8 @@
 // isSaved/toggleSaveは今までどおり同期関数のまま使えるように、
 // savedCacheというメモリ上のキャッシュを介して読み書きします。
 // utils.js の withPieceCount、config.js の NUTRIENT_METRICS、auth.js の isLoggedIn に依存します。
-// replaceSaved は編集シート(recipe-edit.js)が保存に成功したときに呼びます。カードの「編集」ボタンはログイン中だけ押せます。
+// replaceSaved は編集シート(recipe-edit.js)が保存に成功したときに呼びます。詳細シートの「編集」ボタンはログイン中だけ押せます。
+// 保存済み一覧はタイルを2列に並べ、タップで開く詳細シート(saved-sheet.js)に7指標・材料・作り方・栄養の計算内訳を出します。
 // 保存済み一覧の「栄養の計算内訳」は、create-ai.js の renderNutritionDetail/renderNutritionWarn を再利用して表示します
 // (「作る」タブの結果と同じ見た目。内訳は保存時にレシピ本体と一緒に保存されたデータを使います)。
 // サーバーへの保存・削除・取得の失敗は、error-log.js の logError で管理者向けエラーログに記録します
@@ -15,6 +16,7 @@
   const SAVE_KEY = 'recipeRouletteSavedV1'; // 未ログイン時(この端末だけの保存)用のキー
 
   let savedCache = []; // 画面表示に使う「保存済み」リストのメモリキャッシュ
+  let savedSearchOpen = false; // 検索欄を開いているか(虫めがねボタンで切り替える。入力があるときは常に出る)
 
   function getLocalSaved(){
     try {
@@ -169,19 +171,39 @@
     return (typeof renderNutritionWarn === 'function' ? renderNutritionWarn(d) : '') + detail;
   }
 
-  // 一覧カードの栄養表示。検索条件に関わらず、7指標(NUTRIENT_METRICS)を常に全部出す。
-  // 値は recipe.nutrition[id](成分表から計算した全指標)を優先し、無ければ recipe[id]。どちらも無い指標は「ー」で示す(0は値あり)
-  function savedMacroText(d){
-    return NUTRIENT_METRICS.map(m => {
-      let v = null;
-      if(d && d.nutrition && typeof d.nutrition[m.id] === 'number' && isFinite(d.nutrition[m.id])) v = d.nutrition[m.id];
-      else if(d && typeof d[m.id] === 'number' && isFinite(d[m.id])) v = d[m.id];
-      return m.label + ' ' + (v === null ? 'ー' : v + m.unit);
-    }).join(' ・ ');
+
+  // 栄養値。recipe.nutrition[id](成分表から計算した全指標)を優先し、無ければ recipe[id]。どちらも無ければ null(0 は値あり)
+  function savedMetricValue(d, id){
+    if(d && d.nutrition && typeof d.nutrition[id] === 'number' && isFinite(d.nutrition[id])) return d.nutrition[id];
+    if(d && typeof d[id] === 'number' && isFinite(d[id])) return d[id];
+    return null;
+  }
+  // 画面に出す文字。値が無い指標は「ー」(0 は 0g と出す)
+  function savedMetricText(m, v){
+    return v === null ? 'ー' : v + m.unit;
   }
 
-  // 一覧は「料理名・種類・栄養」だけを並べ、タップで材料・作り方・栄養の計算内訳を開く(新しく保存したものが上)
-  // 検索欄に入力があれば、レシピ名・食材に一致するものだけを表示する。
+  // タイルのたんぱく質バーが満タンになる量(g)。タイル同士を見比べるための目安で、目標値ではない
+  const SAVED_PROTEIN_BAR_MAX = 80;
+
+  // 一覧のタイル1枚。「種類・料理名・カロリー・たんぱく質のバー」だけを出し、
+  // 7指標すべて・材料・作り方・栄養の計算内訳は、タップで開くレシピの詳細シート(saved-sheet.js)に出す
+  function savedTileHtml(d){
+    const esc = escapeSavedHtml;
+    const kcal = savedMetricValue(d, 'calories');
+    const protein = savedMetricValue(d, 'protein');
+    const pct = protein === null ? 0 : Math.max(0, Math.min(100, Math.round(protein / SAVED_PROTEIN_BAR_MAX * 100)));
+    return '<button type="button" class="saved-tile" data-id="' + esc(d.id) + '" aria-haspopup="dialog">' +
+      (d.type ? '<span class="saved-tile-kind">' + esc(d.type) + '</span>' : '') +
+      '<span class="saved-tile-title">' + esc(d.name) + '</span>' +
+      '<span class="saved-tile-kcal"><b>' + (kcal === null ? 'ー' : esc(kcal)) + '</b><small>kcal</small></span>' +
+      '<span class="saved-tile-protein"><span class="saved-tile-protein-row"><span>たんぱく質</span><b>' + (protein === null ? 'ー' : esc(protein) + 'g') + '</b></span>' +
+      '<span class="saved-tile-bar" aria-hidden="true"><span style="width:' + pct + '%"></span></span></span>' +
+    '</button>';
+  }
+
+  // 一覧はタイルを2列に並べる(既定は新しく保存したものが上。並べ替えは saved-filter.js の savedSort)。
+  // 検索欄・絞り込みの条件に一致するものだけを表示する。
   function renderSavedView(){
     const all = savedCache;
     const emptyEl = document.getElementById('saved-empty');
@@ -190,20 +212,24 @@
     const countEl = document.getElementById('saved-search-count');
     const noMatchEl = document.getElementById('saved-no-match');
     const rawQuery = inputEl ? inputEl.value : '';
-    const loggedIn = isLoggedIn();
     // 「自作レシピを作る」ボタンの有効・無効もログイン状態に合わせる(recipe-edit.js。ログイン・ログアウトの再描画でここを通る)
     if(typeof refreshNewRecipeButton === 'function') refreshNewRecipeButton();
 
     if(!all.length){
       emptyEl.hidden = false;
       setHiddenById('saved-search', true);
+      setHiddenById('saved-search-toggle', true);
+      setHiddenById('saved-total', true);
       setHiddenById('saved-filter', true);
       setHiddenById('saved-no-match', true);
       listEl.innerHTML = '';
+      if(typeof closeAllSavedSheets === 'function') closeAllSavedSheets();
       return;
     }
     emptyEl.hidden = true;
-    setHiddenById('saved-search', false);
+    // 検索欄は、虫めがねボタンで開いたとき、または入力があるときだけ見せる
+    setHiddenById('saved-search', !(savedSearchOpen || rawQuery));
+    setHiddenById('saved-search-toggle', false);
     setHiddenById('saved-filter', false);
     setHiddenById('saved-search-clear', !rawQuery);
 
@@ -221,8 +247,14 @@
     } else {
       matched = all.filter(textMatch);
     }
+    const narrowed = tokens.length > 0 || filterActive;
+    const totalEl = document.getElementById('saved-total');
+    if(totalEl){
+      totalEl.hidden = false;
+      totalEl.textContent = narrowed ? matched.length + '/' + all.length + '件' : all.length + '件';
+    }
     if(countEl){
-      let text = tokens.length || filterActive ? matched.length + '件ヒット(保存' + all.length + '件中)' : '';
+      let text = narrowed ? matched.length + '件ヒット(保存' + all.length + '件中)' : '';
       if(missingExcluded > 0) text += (text ? '。' : '') + '栄養値のない' + missingExcluded + '件は除外';
       if(filterActive && rangeConflict(savedFilters)) text += (text ? '。' : '') + '最小が最大より大きい指標があります';
       countEl.textContent = text;
@@ -231,54 +263,16 @@
       noMatchEl.hidden = matched.length > 0;
       if(!matched.length){
         noMatchEl.textContent = filterActive
-          ? '条件に一致するレシピはありません。条件を減らすか、「条件をクリア」を押してみてください。'
+          ? '条件に一致するレシピはありません。条件を減らすか、「詳しく絞り込む」の「クリア」を押してみてください。'
           : '「' + rawQuery.trim() + '」に一致するレシピはありません。レシピ名や食材の一部を入力してみてください。';
       }
     }
     if(typeof renderSavedFilter === 'function') renderSavedFilter();
 
-    // 再描画しても、開いていたカード・栄養の計算内訳は開いたままにする
-    const openCards = new Set();
-    const openNutrition = new Set();
-    listEl.querySelectorAll('.saved-card[open]').forEach(c => openCards.add(c.dataset.id));
-    listEl.querySelectorAll('.saved-card .nutrition-detail[open]').forEach(n => {
-      const card = n.closest('.saved-card');
-      if(card) openNutrition.add(card.dataset.id);
-    });
+    const sortId = typeof savedSort === 'string' ? savedSort : 'new';
+    const ordered = typeof sortRecipes === 'function' ? sortRecipes(matched, sortId) : matched.slice().reverse();
+    listEl.innerHTML = ordered.map(savedTileHtml).join('');
 
-    listEl.innerHTML = matched.slice().reverse().map(d => `
-      <details class="saved-card" data-id="${escapeSavedHtml(d.id)}">
-        <summary>
-          <div class="saved-card-head">
-            <h2>${escapeSavedHtml(d.name)}</h2>
-            <span class="dish-type-tag">${escapeSavedHtml(d.type)}</span>
-          </div>
-          ${typeof classifyTagsHtml === 'function' && typeof effectiveMain === 'function' ? '<p class="saved-class-tags">' + classifyTagsHtml(d) + '</p>' : ''}
-          <p class="saved-macro">${savedMacroText(d)}</p>
-          <span class="chev" aria-hidden="true"></span>
-        </summary>
-        <div class="saved-body">
-          <div class="ingredients">
-            <h3>材料</h3>
-            <ul>${(d.ingredients || []).map(x => '<li>' + withPieceCount(escapeSavedHtml(x)) + '</li>').join('')}</ul>
-          </div>
-          <div class="steps">
-            <h3>作り方</h3>
-            <ol>${(d.steps || []).map(x => '<li>' + escapeSavedHtml(x) + '</li>').join('')}</ol>
-          </div>
-          ${renderSavedNutrition(d)}
-          <div class="saved-actions">
-            <button type="button" class="edit-saved-btn" data-edit-id="${escapeSavedHtml(d.id)}"${loggedIn ? '' : ' disabled'}>編集</button>
-            <button type="button" class="remove-saved-btn" data-remove-id="${escapeSavedHtml(d.id)}">このレシピを削除</button>
-          </div>
-          ${loggedIn ? '' : '<p class="edit-login-hint">ログインすると編集できます</p>'}
-        </div>
-      </details>
-    `).join('');
-
-    listEl.querySelectorAll('.saved-card').forEach(card => {
-      if(openCards.has(card.dataset.id)) card.open = true;
-      const nd = card.querySelector('.nutrition-detail');
-      if(nd && openNutrition.has(card.dataset.id)) nd.open = true;
-    });
+    // 詳細シートを開いたまま再描画された(編集の保存・削除など)ときは、中身も最新にする
+    if(typeof refreshSavedDetail === 'function') refreshSavedDetail();
   }

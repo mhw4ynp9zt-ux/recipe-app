@@ -16,7 +16,9 @@ scripts/build_foods_sql.py       成分表のExcel → 上の2つのSQLを作る
 js/
   config.js                      栄養指標の定義(NUTRIENT_METRICS)と、分類の選択肢(GENRES / ROLES / MAINS)
   recipe-classify.js             保存済みレシピの分類の読み出し(主材料の自動判定)と絞り込みの判定。DOMを持たない純粋な関数
-  saved-filter.js                保存済み一覧のチップ・栄養範囲欄・カードのタグの描画と結線(HTMLと見た目は実行時に差し込む)
+  saved-filter.js                保存済み一覧の役割の切り替え・並べ替え・「詳しく絞り込む」シートの描画と結線
+  saved-sheet.js                 下から出るシートの共通処理と、レシピの詳細シート(7指標・材料・作り方・編集・削除)
+  ../css/saved.css               保存済みタブ(2列タイル・シート・＋ボタン)の見た目
   utils.js                       共通関数
   error-log.js                   管理者向けエラーログ(記録・ダウンロード)。他のファイルの失敗もここに集まる
   save.js                        保存済みレシピの読み書き(ログイン中はサーバー、未ログインはlocalStorage)

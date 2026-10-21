@@ -21,6 +21,7 @@
     "test:only-listed": "node test/only-listed_test.mjs && node test/only-listed-ui_test.mjs",
     "test:input-ux": "node test/input-ux-ui_test.mjs",
     "test:saved-macro": "node test/saved-macro-ui_test.mjs",
+    "test:saved-grid": "node test/saved-grid-ui_test.mjs",
     "test:optional-targets": "node test/optional-targets-ui_test.mjs"
   },
   "dependencies": {

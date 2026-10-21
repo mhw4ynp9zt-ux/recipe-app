@@ -1,28 +1,13 @@
 // ==== 画面全体のイベント結線(初期化処理) ====
-// save.js の removeSaved/updateSavedCountBadge/renderSavedView に依存します。
+// save.js の updateSavedCountBadge/renderSavedView、saved-sheet.js の setupSavedDetail に依存します。
 
-  // 削除ボタン(保存済み一覧、イベント委任)。誤タップで消えないように確認してから削除する
-  document.getElementById('saved-list').addEventListener('click', (e) => {
-    const btn = e.target.closest('.remove-saved-btn');
-    if(!btn) return;
-    const card = btn.closest('.saved-card');
-    const titleEl = card && card.querySelector('h2');
-    const name = titleEl ? titleEl.textContent : 'このレシピ';
-    if(!window.confirm('「' + name + '」を保存済みから削除しますか?')) return;
-    removeSaved(btn.dataset.removeId);
-  });
-
-  // 編集ボタン(保存済み一覧、イベント委任)。編集シートは recipe-edit.js。ログイン中だけ開く
-  document.getElementById('saved-list').addEventListener('click', (e) => {
-    const btn = e.target.closest('.edit-saved-btn');
-    if(!btn || btn.disabled || !isLoggedIn()) return;
-    const recipe = getSaved().find(r => r.id === btn.dataset.editId);
-    if(recipe) openRecipeEditor({ mode: 'edit', recipe });
-  });
+  // 一覧のタイルをタップして開く詳細シート(材料・作り方・栄養・編集・削除)。保存済み画面の下から出る(saved-sheet.js)
+  if(typeof setupSavedDetail === 'function') setupSavedDetail();
 
   // 保存済み一覧の検索欄(レシピ名・食材の部分一致)。
-  // 「保存済み」画面の、タイトルと一覧の間にここで差し込みます(index.html は変更不要)。
-  // 欄の表示・非表示と絞り込みは save.js の renderSavedView が行います(保存済みが0件のときは欄ごと隠れます)。
+  // 「保存済み」画面の、タイトル行と一覧の間にここで差し込みます。
+  // 欄の表示・非表示と絞り込みは save.js の renderSavedView が行います。普段は隠れていて、タイトル行の虫めがねボタンで開きます
+  // (入力があるときは常に出ます。保存済みが0件のときは欄ごと隠れます)。
   (function setupSavedSearch(){
     const emptyEl = document.getElementById('saved-empty');
     if(!emptyEl || document.getElementById('saved-search')) return;
@@ -36,7 +21,6 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
           </button>
         </div>
-        <p class="input-hint" id="saved-search-count" aria-live="polite"></p>
       </div>
     `);
     emptyEl.insertAdjacentHTML('afterend', '<p id="saved-no-match" class="saved-no-match" hidden></p>');
@@ -56,6 +40,17 @@
       input.value = '';
       renderSavedView();
       input.focus();
+    });
+
+    // 虫めがねボタン。開いているときに押すと、入力を消して閉じる(隠れた条件が残らないように)
+    const toggle = document.getElementById('saved-search-toggle');
+    if(toggle) toggle.addEventListener('click', () => {
+      const open = !(savedSearchOpen || input.value);
+      if(!open) input.value = '';
+      savedSearchOpen = open;
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      renderSavedView();
+      if(open) input.focus();
     });
   })();
 
