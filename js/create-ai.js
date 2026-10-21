@@ -626,7 +626,7 @@
   function renderNutritionDetail(d){
     if(!d.nutrition || !Array.isArray(d.ingredientDetails)) return '';
     const rows = d.ingredientDetails.map(ing => {
-      const left = escapeHtml(ing.name) + (ing.grams > 0 ? ' ' + ing.grams + 'g' : '');
+      const left = escapeHtml(ing.name) + (ing.grams > 0 ? ' ' + escapeHtml(ing.grams) + 'g' : ''); // 共有されたレシピ(他の人が作ったデータ)も表示するので、数値も無害化する
       let right;
       if(ing.match) right = escapeHtml(ing.match.label);
       else if(ing.grams === 0) right = '<span class="nd-skip">計算に含めていません</span>';
@@ -635,7 +635,7 @@
       return `<li><span class="nd-name">${left}</span><span class="nd-arrow">→</span><span class="nd-food">${right}</span></li>`;
     }).join('');
     const all = NUTRIENT_METRICS.filter(m => d.nutrition[m.id] != null)
-      .map(m => m.label + ' ' + d.nutrition[m.id] + m.unit).join(' ・ ');
+      .map(m => m.label + ' ' + escapeHtml(d.nutrition[m.id]) + m.unit).join(' ・ ');
     return `
       <details class="nutrition-detail">
         <summary>栄養の計算内訳</summary>

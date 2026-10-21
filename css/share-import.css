@@ -1,0 +1,71 @@
+/* ==========================================================
+   料理の写真・共有・取り込み
+   色・枠・影は、テーマ(theme-b1.css)の変数を使います。読み込み順: style.css → theme-b1.css → saved.css → share-import.css
+   ========================================================== */
+
+/* ---------- 一覧のタイルの写真 ---------- */
+.saved-tile-photo{
+  display:block; aspect-ratio:4 / 3; margin:-2px -2px 0;
+  overflow:hidden; background:var(--bg-deep);
+  border:2px solid var(--ink); border-radius:12px;
+}
+.saved-tile-photo img{display:block; width:100%; height:100%; object-fit:cover;}
+
+/* ---------- 詳細シートの写真・操作 ---------- */
+.recipe-photo-block{margin:4px 0 12px;}
+.recipe-photo{
+  display:block; width:100%; max-height:280px; object-fit:cover;
+  border:2.5px solid var(--ink); border-radius:16px; background:var(--bg-deep);
+}
+.recipe-photo-actions{display:flex; flex-wrap:wrap; gap:8px; margin-top:10px;}
+.recipe-photo-actions .btn{width:auto; flex:0 0 auto; cursor:pointer; display:inline-flex; align-items:center; justify-content:center;}
+.recipe-photo-msg{margin:6px 2px 0; font-size:12px; color:var(--ink-soft); min-height:0;}
+.recipe-photo-msg:empty{display:none;}
+.recipe-photo-msg.is-error{color:var(--protein);}
+.share-saved-btn[disabled]{opacity:.45;}
+.recipe-source{margin:12px 0 0; font-size:12px; color:var(--ink-soft); overflow-wrap:anywhere;}
+.recipe-source a{color:inherit; text-decoration:underline;}
+
+/* ---------- シートの重なり順(共有・取り込みは、詳細シートの上) ---------- */
+#import-sheet{z-index:62;}
+#shared-sheet{z-index:64;}
+#share-sheet{z-index:66;}
+
+/* ---------- 共有・取り込みシートの中身 ---------- */
+.share-body{display:flex; flex-direction:column; gap:10px; padding-bottom:calc(env(safe-area-inset-bottom) + 20px);}
+.share-name{margin:0; font-family:var(--logo); font-weight:900; font-size:15px; overflow-wrap:anywhere;}
+.share-label{font-size:13px; font-weight:700;}
+.share-url, .import-text{
+  width:100%; box-sizing:border-box; padding:10px 12px;
+  font:inherit; font-size:16px; /* 16px未満だとiPhoneで入力時に拡大される */
+  color:var(--ink); background:var(--card);
+  border:2.5px solid var(--ink); border-radius:12px;
+}
+.import-text{resize:vertical; min-height:150px; line-height:1.5;}
+.share-actions{display:flex; flex-wrap:wrap; gap:8px;}
+.share-actions .btn{width:auto; flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; text-decoration:none;}
+.share-note{margin:0; font-size:12.5px; line-height:1.7; color:var(--ink-soft);}
+.share-note.is-error{color:var(--protein); font-weight:700;}
+.share-stop{align-self:flex-start; margin-top:4px;}
+.import-seg{margin-bottom:2px;}
+.shared-foot .btn{flex:1;}
+.shared-error{padding:0 20px calc(env(safe-area-inset-bottom) + 12px); background:var(--card);}
+
+/* ---------- 保存済み画面の「取り込む」ボタン(検索ボタンと同じ丸いボタン。タイトルが折り返さないように文字は出さない) ---------- */
+.saved-import-btn{
+  margin-left:auto; flex:0 0 auto;
+  width:44px; height:44px;
+  display:grid; place-items:center; padding:0;
+  color:var(--ink); background:var(--card);
+  border:2.5px solid var(--ink); border-radius:50%;
+  box-shadow:2px 2px 0 var(--ink); cursor:pointer;
+}
+.saved-import-btn:active{transform:translate(1px,1px); box-shadow:1px 1px 0 var(--ink);}
+.saved-import-btn + .saved-search-toggle{margin-left:0;}
+.saved-head .saved-total{white-space:nowrap;}
+
+/* ---------- 編集シートの、取り込みの案内 ---------- */
+.re-import-info{background:var(--bg-deep); border-radius:14px; padding:12px 14px;}
+.re-import-lead{margin:0 0 8px; font-size:13px; line-height:1.7;}
+.re-import-lines summary{font-size:13px; font-weight:700; cursor:pointer;}
+.re-import-lines ul{margin:6px 0 0; padding-left:18px; font-size:13px; line-height:1.7;}

@@ -24,8 +24,10 @@
       return raw ? JSON.parse(raw) : [];
     } catch(e){ return []; }
   }
+  // 端末に保存する。入りきらない(容量オーバー)ときなどは false を返す(写真つきのレシピは大きいため)
   function setLocalSaved(list){
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify(list)); } catch(e){ /* 保存できない環境では無視 */ }
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(list)); return true; }
+    catch(e){ /* 保存できない環境では無視 */ return false; }
   }
 
   // 管理者向けエラーログへ記録する(error-log.js が無い環境では何もしない)
@@ -51,10 +53,13 @@
     return data.recipes || [];
   }
   async function saveToServer(recipe){
+    // 写真(photoData)は別のAPIで送る。表示用の付け足しはレシピ本体に含めない
+    const body = Object.assign({}, recipe);
+    delete body.photoData; delete body.photoUrl; delete body.shareToken;
     const res = await fetch('/api/recipes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(recipe),
+      body: JSON.stringify(body),
     });
     if(!res.ok) await recordServerFailure('save', res, { recipeId: recipe && recipe.id });
   }
@@ -73,6 +78,8 @@
     }
     renderSavedView();
     updateSavedCountBadge();
+    // ログイン状態が変わった(または起動時の確認が済んだ)ので、開いている共有レシピの確認シートの文言を合わせる(recipe-import.js)
+    if(typeof onSavedReloaded === 'function') onSavedReloaded();
   }
 
   // ログイン直後に1回だけ呼ぶ。未ログイン中にこの端末に貯めていた保存済みレシピを
@@ -83,6 +90,8 @@
     for(const r of local){
       try { await saveToServer(r); } catch(e){ /* 失敗した分は次回また試す */ recordSaveError('migrate', e, { recipeId: r && r.id }); }
     }
+    // 端末内の写真もサーバーへ引き継ぐ(photo.js)
+    if(typeof migrateLocalPhotos === 'function') await migrateLocalPhotos(local);
     setLocalSaved([]);
   }
 
@@ -118,10 +127,27 @@
   // 無ければ新規として追加する(一覧は新しいものが上に出る)。サーバーへの保存は呼び出し側が済ませている。
   function replaceSaved(recipe){
     const idx = savedCache.findIndex(r => r.id === recipe.id);
-    if(idx >= 0) savedCache[idx] = recipe;
+    if(idx >= 0){
+      // サーバーが返すレシピには、写真のURL・共有トークンが付かないので、今のキャッシュのものを引き継ぐ
+      const old = savedCache[idx];
+      ['photoUrl', 'photoData', 'shareToken'].forEach(k => { if(old[k] && recipe[k] === undefined) recipe[k] = old[k]; });
+      savedCache[idx] = recipe;
+    }
     else savedCache.push(recipe);
     renderSavedView();
     updateSavedCountBadge();
+  }
+  // 取り込んだレシピを、保存済みに追加する(共有リンクの取り込み)。ログイン中はサーバー側の保存が済んだものを渡す。
+  // 未ログインのときは、この端末に保存する(入りきらなければ false)
+  function addImportedRecipe(recipe){
+    savedCache.push(recipe);
+    if(!isLoggedIn() && !setLocalSaved(savedCache)){
+      savedCache.pop();
+      return false;
+    }
+    renderSavedView();
+    updateSavedCountBadge();
+    return true;
   }
   function updateSavedCountBadge(){
     const count = savedCache.length;
@@ -213,7 +239,9 @@
     const sh = savedPfcShares(protein, fat, carbs);
     const seg = (cls, pct) => '<span class="' + cls + '" style="width:' + pct.toFixed(1) + '%"></span>';
     const chip = (cls, label, v, unit, digits) => '<span class="saved-tile-chip ' + cls + '">' + label + ' ' + savedTileNum(v, unit, digits) + '</span>';
+    const photoSrc = typeof recipePhotoSrc === 'function' ? recipePhotoSrc(d) : '';
     return '<button type="button" class="saved-tile" data-id="' + esc(d.id) + '" aria-haspopup="dialog">' +
+      (photoSrc ? '<span class="saved-tile-photo"><img src="' + esc(photoSrc) + '" alt="" loading="lazy" decoding="async"></span>' : '') +
       (d.type ? '<span class="saved-tile-kind">' + esc(d.type) + '</span>' : '') +
       '<span class="saved-tile-title">' + esc(d.name) + '</span>' +
       '<span class="saved-tile-kcal"><b>' + (kcal === null ? 'ー' : esc(kcal)) + '</b><small>kcal</small></span>' +

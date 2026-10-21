@@ -4,7 +4,8 @@
 // save.js の escapeSavedHtml / savedMetricValue / savedMetricText / renderSavedNutrition / getSaved / removeSaved、
 // config.js の NUTRIENT_METRICS、utils.js の withPieceCount、auth.js の isLoggedIn、recipe-edit.js の openRecipeEditor に依存します
 // (どれも呼ぶのはタップされたときなので、読み込み順は save.js より後であればOKです)。
-// このファイルは通信をしません(削除は save.js の removeSaved が、編集は recipe-edit.js が行います)。
+// このファイルは通信をしません(削除は save.js の removeSaved が、編集は recipe-edit.js が、写真は photo.js が、共有は recipe-share.js が行います)。
+// 詳細シートは、写真の表示と追加・変更・削除、共有ボタン、取り込み元のリンクも出します。savedDetailHtml の opts.readonly は、共有リンクの表示(recipe-import.js)で使います。
 // 見た目は css/saved.css です。
 
 let savedSheetOpener = null; // シートを開いたボタン(閉じたらフォーカスを戻す)
@@ -52,8 +53,37 @@ function closeAllSavedSheets(){
 
 // ---- レシピの詳細シート ----
 
-function savedDetailHtml(d, loggedIn){
+// 取り込み元URLの表示用(ドメインだけ)。http(s)以外は出さない
+function savedSourceHtml(d){
   const esc = escapeSavedHtml;
+  if(!d || typeof d.sourceUrl !== 'string' || !/^https?:\/\//i.test(d.sourceUrl)) return '';
+  let host = '';
+  try { host = new URL(d.sourceUrl).hostname; } catch(e){ return ''; }
+  return '<p class="recipe-source">取り込み元: <a href="' + esc(d.sourceUrl) + '" target="_blank" rel="noopener noreferrer nofollow">' + esc(host) + '</a></p>';
+}
+
+// 料理の写真と、写真・共有の操作(photo.js / recipe-share.js)。読み取り専用(共有リンクの表示)では操作を出さない
+function savedPhotoHtml(d, loggedIn, opts){
+  const esc = escapeSavedHtml;
+  const src = opts && opts.readonly ? (opts.photoSrc || '') : (typeof recipePhotoSrc === 'function' ? recipePhotoSrc(d) : '');
+  const img = src ? '<img class="recipe-photo" src="' + esc(src) + '" alt="' + esc(d.name) + 'の写真">' : '';
+  if(opts && opts.readonly) return img ? '<div class="recipe-photo-block">' + img + '</div>' : '';
+  const pick = '<label class="btn btn-ghost btn-small photo-pick-btn">' + (src ? '写真を変更' : '写真を追加') +
+    '<input type="file" accept="image/*" data-photo-input hidden></label>';
+  const remove = src ? '<button type="button" class="btn btn-ghost btn-small" data-photo-remove="' + esc(d.id) + '">写真を削除</button>' : '';
+  const share = '<button type="button" class="btn btn-ghost btn-small share-saved-btn" data-share-id="' + esc(d.id) + '"' + (loggedIn ? '' : ' disabled') + '>' +
+    (d.shareToken ? '共有中' : '共有') + '</button>';
+  return '<div class="recipe-photo-block">' + img +
+    '<div class="recipe-photo-actions">' + pick + remove + share + '</div>' +
+    '<p class="recipe-photo-msg" data-photo-msg role="status"></p>' +
+    (loggedIn ? '' : '<p class="edit-login-hint">ログインすると、レシピを共有リンクで送れます(写真はこの端末に保存されます)</p>') +
+  '</div>';
+}
+
+function savedDetailHtml(d, loggedIn, opts){
+  const esc = escapeSavedHtml;
+  const readonly = !!(opts && opts.readonly);
+  const titleId = (opts && opts.titleId) || 'saved-detail-title';
   const calories = NUTRIENT_METRICS.find(m => m.id === 'calories');
   // 7指標は、検索・絞り込みの条件に関わらず、いつも全部出す(値の無い指標は「ー」)
   const cell = (m) => '<div class="saved-nutri m-' + esc(m.id) + '"><dt>' + esc(m.label) + '</dt><dd>' + esc(savedMetricText(m, savedMetricValue(d, m.id))) + '</dd></div>';
@@ -62,25 +92,28 @@ function savedDetailHtml(d, loggedIn){
   return '' +
     '<div class="saved-sheet-grip" aria-hidden="true"></div>' +
     '<header class="saved-sheet-head">' +
-      '<h2 id="saved-detail-title">' + esc(d.name) + '</h2>' +
+      '<h2 id="' + titleId + '">' + esc(d.name) + '</h2>' +
       '<button type="button" class="saved-sheet-close" data-sheet-close aria-label="閉じる">' +
         '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>' +
       '</button>' +
     '</header>' +
     '<div class="saved-sheet-scroll">' +
+      savedPhotoHtml(d, loggedIn, opts) +
       '<div class="saved-detail-tags">' + tags + '</div>' +
       '<dl class="saved-nutri-grid">' + NUTRIENT_METRICS.filter(m => m.id !== 'calories').map(cell).join('') + (calories ? cell(calories) : '') + '</dl>' +
       '<div class="saved-body">' +
         '<div class="ingredients"><h3>材料</h3><ul>' + (d.ingredients || []).map(x => '<li>' + withPieceCount(esc(x)) + '</li>').join('') + '</ul></div>' +
         '<div class="steps"><h3>作り方</h3><ol>' + (d.steps || []).map(x => '<li>' + esc(x) + '</li>').join('') + '</ol></div>' +
+        savedSourceHtml(d) +
         renderSavedNutrition(d) +
       '</div>' +
     '</div>' +
+    (readonly ? (opts.footHtml || '') :
     '<footer class="saved-sheet-foot">' +
       '<button type="button" class="edit-saved-btn" data-edit-id="' + esc(d.id) + '"' + (loggedIn ? '' : ' disabled') + '>編集</button>' +
       '<button type="button" class="remove-saved-btn" data-remove-id="' + esc(d.id) + '">このレシピを削除</button>' +
     '</footer>' +
-    (loggedIn ? '' : '<p class="edit-login-hint saved-sheet-hint">ログインすると編集できます</p>');
+    (loggedIn ? '' : '<p class="edit-login-hint saved-sheet-hint">ログインすると編集できます</p>'));
 }
 
 function savedDetailPanel(){
@@ -141,8 +174,31 @@ function setupSavedDetail(){
     });
   }
 
+  // 写真の追加・差し替え(photo.js)。同じ写真をもう一度選べるように、選んだあとに値を空にする
+  wrap.addEventListener('change', (e) => {
+    const input = e.target.closest('[data-photo-input]');
+    if(!input) return;
+    const file = input.files && input.files[0];
+    input.value = '';
+    if(file && typeof setRecipePhoto === 'function' && savedDetailId) setRecipePhoto(savedDetailId, file);
+  });
+
   wrap.addEventListener('click', (e) => {
     if(e.target.closest('[data-sheet-close]')){ closeSavedSheet(wrap); return; }
+
+    const removePhoto = e.target.closest('[data-photo-remove]');
+    if(removePhoto){
+      if(typeof removeRecipePhoto === 'function') removeRecipePhoto(removePhoto.dataset.photoRemove);
+      return;
+    }
+
+    // 共有ボタン。共有リンクはサーバーで作るので、ログイン中だけ押せる(recipe-share.js)
+    const shareBtn = e.target.closest('.share-saved-btn');
+    if(shareBtn){
+      if(shareBtn.disabled || !isLoggedIn()) return;
+      if(typeof openShareSheet === 'function') openShareSheet(shareBtn.dataset.shareId, shareBtn);
+      return;
+    }
 
     // 編集ボタン。編集シートは recipe-edit.js。ログイン中だけ開く(詳細シートは開いたままにして、保存後に最新の中身へ)
     const edit = e.target.closest('.edit-saved-btn');

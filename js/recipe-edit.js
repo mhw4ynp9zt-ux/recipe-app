@@ -51,6 +51,23 @@ function classifySelect(key, id, value, emptyLabel, list){
   return '<select id="' + id + '" data-k="' + key + '">' + opt('', emptyLabel) + list.map(v => opt(v, v)).join('') + '</select>';
 }
 
+// 取り込みから開いたときの案内。元の材料の表記を並べておく(グラム数を入れるときの手がかり)。画面の骨組みが変わるまで作り直さない静的な部分
+function importInfoHtml(state){
+  const info = state.importInfo;
+  if(!info) return '';
+  const esc = escapeSavedHtml;
+  const lines = (info.lines || []).map(l => '<li>' + esc(l) + '</li>').join('');
+  const warns = (info.warnings || []).map(w => '<p class="re-error">' + esc(w) + '</p>').join('');
+  let host = '';
+  if(info.source){ try { host = new URL(info.source).hostname; } catch(e){ host = ''; } }
+  return '<section class="re-section re-import-info">' +
+    '<p class="re-import-lead">' + (host ? esc(host) + ' から取り込みました。' : '貼り付けた文章から取り込みました。') +
+    '内容を確認し、<b>グラム数が空欄の食材</b>に数字を入れてください(すべての食材にグラム数が入ると、栄養が計算されます。使わない行は×で削除できます)。</p>' +
+    warns +
+    (lines ? '<details class="re-import-lines" open><summary>元の材料の表記</summary><ul>' + lines + '</ul></details>' : '') +
+    '</section>';
+}
+
 function renderEditorHtml(state, opts){
   const esc = escapeSavedHtml;
   const typeOptions = (opts && opts.typeOptions) || [];
@@ -144,9 +161,10 @@ function renderEditorHtml(state, opts){
   return `
     <div class="re-head">
       <button type="button" class="re-close" data-act="close">閉じる</button>
-      <h2>${state.mode === 'edit' ? 'レシピを編集' : '自作レシピを作る'}</h2>
+      <h2>${state.mode === 'edit' ? 'レシピを編集' : (state.importInfo ? 'レシピを取り込む' : '自作レシピを作る')}</h2>
     </div>
     <div class="re-scroll">
+      ${importInfoHtml(state)}
       <section class="re-section">
         <label class="re-label" for="re-name">料理名</label>
         <input type="text" id="re-name" data-k="name" value="${esc(d.name)}" maxlength="60" placeholder="例: 親子丼" autocomplete="off">

@@ -22,7 +22,9 @@
     "test:input-ux": "node test/input-ux-ui_test.mjs",
     "test:saved-macro": "node test/saved-macro-ui_test.mjs",
     "test:saved-grid": "node test/saved-grid-ui_test.mjs",
-    "test:optional-targets": "node test/optional-targets-ui_test.mjs"
+    "test:optional-targets": "node test/optional-targets-ui_test.mjs",
+    "test:media": "node test/media-api_test.mjs && node test/recipe-import_test.mjs && node test/no-ai-cost_test.mjs",
+    "test:media-ui": "node test/photo-share-import-ui_test.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.0"
