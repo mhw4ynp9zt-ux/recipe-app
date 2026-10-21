@@ -1104,12 +1104,6 @@
       }
       if(typeof resBody.data.jobId !== 'string') throw new Error('Unexpected response shape');
       started = { id: resBody.data.jobId, request: logContext.request, startedAt: Date.now(), resumed: !!resBody.data.resumed };
-      // 作成に使った食材を「最近使った食材」に控える(この端末の localStorage だけ。サーバーへは送らない)
-      try {
-        if(Array.isArray(body.dishes) && typeof createMultiFields !== 'undefined' && createMultiFields && typeof createMultiFields.rememberRecentIngredients === 'function'){
-          createMultiFields.rememberRecentIngredients(body.dishes.reduce((acc, d) => acc.concat(String(d.ingredients || '').split(/\s+/)), []));
-        }
-      } catch(e){ /* 控えられないだけ */ }
       // 「今回だけ」の設定なので、ジョブを作ったら「除外する」に戻す(安全側。アレルギーの食材を次回うっかり使わないため)
       if(skipExcludedFoods){ skipExcludedFoods = false; renderExcludedUse(); }
       if(resBody.data.resumed){

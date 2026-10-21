@@ -1,4 +1,4 @@
-// 入力欄の改善(食材チップ・手間度の説明・今回だけの設定)の画面テスト(Playwright)。
+// 入力欄の改善(手間度の説明・今回だけの設定)の画面テスト(Playwright)。
 // 【重要】実際のAI(xAI・有料)も、外部サイトも呼びません。
 //   ・ページは、このテストが立てる 127.0.0.1 のローカルサーバーから配る
 //   ・ブラウザの全通信を route で横取りし、/api/* は偽の応答、127.0.0.1 以外(unpkg など)は遮断して件数を数える → 外部通信は0件を assert
@@ -59,41 +59,6 @@ const chipsOf = (page) => page.$$eval("#create-dish-1-ingredients-list .chip", (
 
 const browser = await chromium.launch();
 try {
-  { // 改善3: チップ入力
-    const { page, ctx, seen } = await openPage(browser);
-    await page.fill(IN, "鶏むね肉"); await page.press(IN, "Enter");
-    await page.type(IN, "キャベツ "); // スペースで確定
-    await page.type(IN, "卵、玉ねぎ,"); // 読点・カンマでも確定
-    assert.deepEqual(await chipsOf(page), ["鶏むね肉", "キャベツ", "卵", "玉ねぎ"]);
-    await page.type(IN, "卵"); await page.press(IN, "Enter");
-    assert.equal((await chipsOf(page)).length, 4, "重複は1つ");
-    await page.click("#create-dish-1-ingredients-list .chip-remove >> nth=1");
-    assert.deepEqual(await chipsOf(page), ["鶏むね肉", "卵", "玉ねぎ"]);
-    await page.fill(IN, "ピーマン"); // 確定せずに作成
-    const body = await create(page, seen);
-    assert.equal(body.dishes[0].ingredients, "鶏むね肉 卵 玉ねぎ ピーマン", "入力中の文字も送られる");
-    assert.equal(await page.isHidden("#create-dish-1-ingredients-add"), true);
-    ok("改善3: Enter/スペース/読点で確定・重複なし・×で削除・入力中の文字も送られる");
-    for (let i = 0; i < 12 && await page.isEnabled(IN); i++) { await page.fill(IN, "食材" + i); await page.press(IN, "Enter"); }
-    assert.equal(await page.isEnabled(IN), false, "上限に達したら入力欄は止まる");
-    assert.equal((await chipsOf(page)).length, 10, "最大10個");
-    ok("改善3: 食材は最大10個");
-    assert.deepEqual(unexpectedExternal(seen), []); assert.deepEqual(seen.aiLike, []); await ctx.close();
-  }
-  { // 最近使った食材
-    const { page, ctx, seen } = await openPage(browser, { recent: ["さば", "ねぎ"], createOk: true });
-    assert.equal(await page.locator("#create-dish-1-ingredients-list .recent-chip").count(), 2);
-    await page.click('#create-dish-1-ingredients-list .recent-chip[data-name="さば"]');
-    assert.deepEqual(await chipsOf(page), ["さば"]);
-    assert.equal(await page.locator("#create-dish-1-ingredients-list .recent-chip").count(), 1, "選んだものは候補から消える");
-    await page.fill(IN, "豆腐");
-    await create(page, seen);
-    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("recipeRouletteRecentIngredientsV1")));
-    assert.ok(stored.includes("豆腐") && stored.includes("さば") && stored.includes("ねぎ"), "作成に使った食材が控えられる");
-    ok("最近使った食材: タップで追加・候補から消える・作成時にこの端末へ控える(サーバーへは送らない)");
-    assert.equal(JSON.stringify(seen.createBodies[0]).includes("ねぎ"), false, "使っていない候補は送られない");
-    assert.deepEqual(unexpectedExternal(seen), []); await ctx.close();
-  }
   { // 改善4: 手間度の説明が常に全段階出る
     const { page, ctx, seen } = await openPage(browser);
     const n = await page.locator("#effort-desc-1 .effort-desc-item").count();
