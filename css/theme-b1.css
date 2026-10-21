@@ -1,0 +1,347 @@
+/* ==========================================================
+   コンダテ — デザインテーマ「B-1 ミルクティー」
+   ポップステッカー調(太い枠線+ずらした影)を、やわらかいベージュ系の配色で。
+   ・style.css の「あと」に読み込み、見た目だけを上書きします(機能・id・クラス名は変えていません)。
+   ・元に戻したいときは、index.html の theme-b1.css の1行を消すだけです。
+   ・各 JS が実行時に差し込む部品用CSSにも勝てるよう、セレクタの先頭に body を付けています。
+   ========================================================== */
+
+:root{
+  /* ベース */
+  --bg:#F1DFC2;          /* ミルクティーのベージュ */
+  --bg-deep:#E6D1AE;
+  --card:#FFFBF3;
+  --ink:#3B2F2A;         /* こげ茶(文字・枠線・影) */
+  --ink-soft:#5C4C44;
+  --ink-faint:#6E5E56;
+  --line:#D2BC98;        /* 区切り線(やわらかい) */
+  --line-strong:#3B2F2A; /* はっきりした枠線 */
+
+  /* ブランド */
+  --brand:#3B2F2A;
+  --brand-ink:#F6D88A;
+  --brand-soft:#EADBC0;
+  --accent:#A8473A;
+  --accent-soft:#F2B3AA;
+
+  /* 栄養指標: 背景はパステル、文字色は読みやすい濃い色 */
+  --protein:#8E3F34;  --protein-bg:#F2B3AA;
+  --veg:#3F5F33;      --veg-bg:#B5CFA4;
+  --fat:#7A5A12;      --fat-bg:#F6D88A;
+  --salt:#2F5470;     --salt-bg:#AECBDD;
+  --fiber:#2E6458;    --fiber-bg:#B8D8D0;
+  --carbs:#80501F;    --carbs-bg:#F0C9A0;
+  --calories:#6B4A78; --calories-bg:#D9C3E0;
+
+  --warn:#7A4A00;     --warn-bg:#FBEBC4;
+  --danger:#9C3A2E;   --danger-bg:#FBE0DA;
+
+  /* B-1 専用 */
+  --field:#FBF0DA;       /* 入力欄の地 */
+  --pop:#E39A8E;         /* 影・差し色のサーモン */
+  --sun:#F6D88A;         /* 選択中の黄色 */
+
+  --radius:22px;
+  --radius-sm:14px;
+  --shadow:5px 5px 0 #3B2F2A;
+  --tabbar-h:78px;
+  --serif:'Zen Maru Gothic', 'Zen Kaku Gothic New', system-ui, sans-serif;
+}
+
+body{background:var(--bg-deep);}
+body .app{background:var(--bg);}
+:focus-visible{outline:3px solid var(--pop);}
+
+/* ---------- ヘッダー ---------- */
+body .hero{margin:6px 2px 22px; padding:0;}
+body .hero::before, body .hero::after{display:none;}
+body .brand{
+  display:inline-block;
+  margin:0 0 12px;
+  padding:5px 14px;
+  background:var(--ink);
+  color:var(--sun);
+  border-radius:999px;
+  font-size:14px;
+  line-height:1.5;
+  letter-spacing:.1em;
+}
+body .brand-mark{display:none;}
+/* 見出し(h1)を画面にも出す */
+body .hero h1{
+  position:static;
+  width:auto; height:auto;
+  margin:0 0 10px;
+  overflow:visible;
+  clip:auto;
+  white-space:normal;
+  font-family:var(--logo);
+  font-weight:900;
+  font-size:clamp(34px, 10.5vw, 40px);
+  line-height:1.25;
+  letter-spacing:-.01em;
+  color:var(--ink);
+}
+body .hero h1::after{
+  content:"";
+  display:inline-block;
+  margin-left:8px;
+  width:14px; height:14px;
+  border-radius:50%;
+  background:#F2B3AA;
+  border:3px solid var(--ink);
+  vertical-align:2px;
+}
+body .hero-lead{padding-left:0; color:var(--ink); font-weight:500;}
+
+/* ---------- 下部のタブバー(浮かせたカード型) ---------- */
+body .view-tabs{
+  left:12px; right:12px;
+  bottom:calc(env(safe-area-inset-bottom) + 10px);
+  gap:6px;
+  padding:6px;
+  background:var(--card);
+  -webkit-backdrop-filter:none;
+  backdrop-filter:none;
+  border:3px solid var(--ink);
+  border-radius:22px;
+  box-shadow:4px 4px 0 var(--ink);
+}
+body .view-tab{
+  min-height:52px;
+  padding:4px 0;
+  border-radius:16px;
+  color:var(--ink);
+  font-size:11.5px;
+  font-weight:700;
+}
+body .view-tab.active{background:var(--ink); color:var(--sun);}
+body .view-tab.active svg{fill:none; transform:none;}
+body .view-tab:active{background:var(--bg-deep);}
+body .view-tab.active:active{background:var(--ink);}
+body .saved-count{background:var(--accent); color:#fff; box-shadow:0 0 0 2px var(--card);}
+
+/* ---------- パネル ---------- */
+body .panel{
+  border:3px solid var(--ink);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  padding:18px 16px 20px;
+  margin-bottom:18px;
+}
+body .panel-head h3{font-weight:900; font-size:16px;}
+body .admin-tag{background:var(--brand-soft); color:var(--ink); border:2px solid var(--ink);}
+body .view-title{font-family:var(--logo); font-weight:900; font-size:24px;}
+
+/* ステップ見出し */
+body .step-head{gap:10px; margin-bottom:14px;}
+body .step-head h2{font-size:17px; font-weight:900;}
+body .step-num{
+  width:34px; height:34px;
+  background:var(--ink); color:var(--sun);
+  font-family:var(--logo); font-weight:900; font-size:17px;
+}
+body .step-tag{
+  padding:3px 10px;
+  border-radius:999px;
+  background:var(--brand-soft);
+  color:var(--ink-soft);
+  font-size:11.5px;
+  font-weight:700;
+}
+
+/* ---------- 入力 ---------- */
+body .field label, body .option-label{font-weight:900; font-size:13.5px;}
+body input[type="text"], body input[type="search"], body input[type="password"], body input[type="number"], body select{
+  border:2.5px solid var(--ink);
+  border-radius:14px;
+  background-color:var(--field);
+  font-weight:700;
+  color:var(--ink);
+}
+body input::placeholder{color:var(--ink-faint); font-weight:500;}
+body input:focus, body select:focus{
+  border-color:var(--ink);
+  background-color:#fff;
+  box-shadow:3px 3px 0 var(--pop);
+}
+body .input-hint{color:var(--ink-soft);}
+
+/* ---------- 栄養指標のチップ ---------- */
+body .metric-toggle-btn{
+  min-height:44px;
+  padding:7px 16px 7px 12px;
+  border:2.5px solid var(--ink);
+  background:var(--card);
+  color:var(--ink);
+  font-size:14px;
+  font-weight:700;
+}
+body .metric-toggle-btn::before{border:2px solid var(--ink);}
+body .metric-toggle-btn.active{
+  background-color:var(--c-bg);
+  border-color:var(--ink);
+  color:var(--ink);
+  font-weight:900;
+  box-shadow:2px 2px 0 var(--ink);
+}
+body .metric-toggle-btn.active::before{border-color:var(--ink); background-color:var(--ink);}
+
+/* 目標値 */
+body .target-item{
+  background:var(--c-bg, var(--brand-soft));
+  border:2.5px solid var(--ink);
+  border-radius:18px;
+}
+body .target-item .option-label{color:var(--ink);}
+body .target-input input{
+  border:2.5px solid var(--ink);
+  background-color:var(--card);
+  font-size:24px;
+  font-weight:900;
+  padding-top:8px; padding-bottom:8px;
+}
+body .target-input input:focus{border-color:var(--ink); box-shadow:3px 3px 0 var(--pop);}
+body .target-unit{color:var(--ink); font-weight:700;}
+
+/* ---------- 品数・手間度などの切替ボタン ---------- */
+body .count-toggle{padding:0; gap:10px; background:transparent; border-radius:0;}
+body .toggle-btn{
+  min-height:54px;
+  border:2.5px solid var(--ink);
+  border-radius:18px;
+  background:var(--card);
+  color:var(--ink);
+  font-size:18px;
+  font-weight:700;
+}
+body .toggle-btn.active{
+  background:var(--sun);
+  color:var(--ink);
+  font-weight:900;
+  box-shadow:3px 3px 0 var(--ink);
+}
+/* 手間度のチップ(5つ並び)は小さめに */
+body .effort-row{gap:6px;}
+body .effort-row .toggle-btn{min-height:46px; border-radius:14px; font-size:12.5px; padding:0 2px;}
+body .effort-row .toggle-btn.active{box-shadow:2px 2px 0 var(--ink);}
+
+/* ---------- ボタン ---------- */
+body .btn{
+  border:3px solid var(--ink);
+  border-radius:18px;
+  font-weight:900;
+}
+body .btn-primary{background:var(--ink); color:var(--sun); box-shadow:5px 5px 0 var(--pop);}
+body .btn-secondary{background:var(--card); color:var(--ink); border-color:var(--ink); box-shadow:4px 4px 0 var(--ink);}
+body .btn-ghost{background:transparent; color:var(--ink); border-color:var(--ink);}
+body .btn-small{box-shadow:3px 3px 0 var(--ink);}
+body .btn-primary.btn-small{box-shadow:3px 3px 0 var(--pop);}
+body .btn-ghost.btn-small{box-shadow:none;}
+body .btn:active{transform:translate(2px, 2px);}
+body .btn-generate{min-height:60px; font-size:18px; letter-spacing:.06em;}
+body .summary-line{color:var(--ink); font-weight:700;}
+body .reroll{border:3px solid var(--ink); border-radius:18px; font-weight:900;}
+
+/* ---------- お知らせ・状態表示 ---------- */
+body .notice{background:var(--brand-soft); border:2.5px solid var(--ink); border-radius:18px;}
+body .notice strong{color:var(--ink);}
+body .notice .btn{background:var(--ink); color:var(--sun);}
+body .alert-error{border:2px solid var(--danger);}
+body .loading-card{border:3px solid var(--ink);}
+body .spinner{border:3px solid var(--brand-soft); border-top-color:var(--ink);}
+body .status-line{background:var(--field); border:2px solid var(--ink);}
+body .log-box{border:2px dashed var(--ink);}
+
+/* ---------- レシピの結果 ---------- */
+body .recipe-card{border:3px solid var(--ink); border-radius:var(--radius); box-shadow:var(--shadow);}
+body .recipe-tag{color:var(--ink); font-weight:900;}
+body .recipe-tag::before{background:var(--pop); border:2px solid var(--ink); width:12px; height:12px; box-sizing:border-box;}
+body .badge{border:2.5px solid var(--ink); border-radius:14px; box-shadow:2px 2px 0 var(--ink);}
+body .badge-label{color:var(--ink); opacity:1; font-weight:900;}
+body .badge.off{border-style:dashed; background:var(--card); box-shadow:none;}
+body .target-check{border:2px solid var(--ink); color:var(--ink);}
+body .dish-block{border-top:3px dashed var(--ink);}
+body .dish-head h2{font-family:var(--logo); font-weight:900; font-size:22px;}
+body .dish-num{background:var(--ink); color:var(--sun);}
+body .dish-type-tag{background:var(--accent-soft); color:var(--ink); border:2px solid var(--ink);}
+body .save-btn{
+  min-height:44px;
+  border:2.5px solid var(--ink);
+  background:var(--card);
+  color:var(--ink);
+  font-weight:900;
+  box-shadow:2px 2px 0 var(--ink);
+}
+body .save-btn.saved{background:var(--accent-soft); color:var(--ink);}
+body .ingredients li{border-bottom:2px dotted var(--ink);}
+body .ingredients li:last-child{border-bottom:none;}
+body .recipe-card h3, body .saved-body h3{color:var(--ink); font-weight:900; font-size:14px;}
+body .steps li{padding-left:42px;}
+body .steps li::before{
+  top:0;
+  width:30px; height:30px;
+  border-radius:8px;
+  background:var(--salt-bg);
+  color:var(--ink);
+  border:2.5px solid var(--ink);
+  box-sizing:border-box;
+  font-weight:900;
+}
+body .steps li:not(:last-child)::after{left:14px; top:34px; background:var(--ink); opacity:.35;}
+body .note{color:var(--ink-soft);}
+body .nutrition-detail{border:2px solid var(--ink); background:var(--field);}
+body .nutrition-detail summary{color:var(--ink);}
+
+/* ---------- 保存済み ---------- */
+body .empty-state, body .saved-no-match{border:3px dashed var(--ink);}
+body .empty-state svg{stroke:var(--ink);}
+body .search-icon{stroke:var(--ink-soft);}
+body .saved-card{border:3px solid var(--ink); border-radius:20px; box-shadow:4px 4px 0 var(--ink);}
+body .saved-card-head h2{font-family:var(--logo); font-weight:900;}
+body .saved-card > summary .chev{color:var(--ink);}
+body .saved-body{border-top:2px solid var(--ink);}
+body .remove-saved-btn{border:2.5px solid var(--ink); color:var(--danger); background:var(--card); font-weight:900;}
+body .edit-saved-btn{border:2.5px solid var(--ink); background:var(--card); color:var(--ink); font-weight:900; box-shadow:2px 2px 0 var(--ink);}
+body .edit-saved-btn:disabled{box-shadow:none;}
+
+/* ---------- アカウント ---------- */
+body .account-status{background:var(--brand-soft); border:2.5px solid var(--ink);}
+body .account-avatar{background:var(--ink); color:var(--sun);}
+
+/* ---------- 動的な入力欄(multi-field.js が差し込む部品) ---------- */
+body .multi-list{gap:8px;}
+body .multi-row{gap:8px;}
+body .row-remove{
+  width:48px; height:48px;
+  border:2.5px solid var(--ink);
+  border-radius:14px;
+  background:var(--card);
+  color:var(--ink);
+}
+body .row-remove:active{background:var(--bg-deep);}
+body .add-row-btn{
+  width:100%;
+  justify-content:center;
+  min-height:46px;
+  border:2.5px dashed var(--ink);
+  border-radius:14px;
+  background:var(--card);
+  color:var(--ink);
+  font-weight:900;
+}
+body .add-row-btn:active{background:var(--brand-soft);}
+body .dish-card + .dish-card{border-top:3px dashed var(--ink);}
+body .dish-card-title{font-weight:900; font-size:16px;}
+
+/* ---------- 編集シート ---------- */
+body .recipe-edit-sheet, body .re-body{background:var(--bg);}
+body .re-head{background:var(--card); border-bottom:3px solid var(--ink);}
+body .re-head h2{font-weight:900;}
+body .re-close{border:2.5px solid var(--ink); color:var(--ink); background:var(--card);}
+body .re-section{border:3px solid var(--ink); box-shadow:4px 4px 0 var(--ink);}
+body .re-row-main textarea{border:2.5px solid var(--ink); background:var(--field); color:var(--ink);}
+body .re-row-main textarea:focus{border-color:var(--ink); background:#fff; box-shadow:3px 3px 0 var(--pop);}
+body .re-icon-btn{border:2.5px solid var(--ink); color:var(--ink); background:var(--card);}
+body .re-manual{background:var(--field); border:2px solid var(--ink);}
+body .re-foot{background:var(--card); border-top:3px solid var(--ink);}
