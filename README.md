@@ -10,6 +10,7 @@ css/style.css                    スタイル
 db/schema.sql                    D1のテーブル定義(初回)
 db/migration-002-ai-settings.sql AI設定用テーブルの追加分(app_settings、ai_usage_daily)
 db/migration-003-foods.sql       日本食品標準成分表のテーブル定義(foods、food_groups、nutrient_defs)
+db/migration-010-photos-shares.sql 料理の写真・共有リンクのテーブル(recipe_photos、recipe_shares)。適用手順は docs/PHOTO-SHARE-IMPORT.md
 db/seed-foods.sql                成分表のデータ(wrangler用。2,538食品。scripts/build_foods_sql.py が文科省のExcelから生成)
 data/foods.json                  成分表のデータ(ブラウザ取り込み用)
 scripts/build_foods_sql.py       成分表のExcel → 上の2つのSQLを作るスクリプト
@@ -26,6 +27,9 @@ js/
   settings.js                    管理者用のAI設定欄(管理者のときだけ表示)
   tabs.js                        タブ切り替え
   create-ai.js                   「作る」タブ。条件をサーバーへ送ってAIレシピを表示
+  photo.js                       料理の写真(端末での縮小・付け外し)。詳しくは docs/PHOTO-SHARE-IMPORT.md
+  recipe-share.js                レシピの共有リンク(共有シート)
+  recipe-import.js               レシピの取り込み(共有リンク・URL・テキスト)と、共有されたレシピの確認シート
   recipe-edit-core.js            レシピ編集・自作の処理(入力の整形、プレビュー計算の遅延、保存)。通信は注入された fetch だけ
   recipe-edit.js                 レシピ編集・自作の画面(自作ボタンと編集シートを実行時に差し込む)
   main.js                        初期化

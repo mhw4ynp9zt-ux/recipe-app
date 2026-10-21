@@ -62,3 +62,6 @@
   // 起動中、create-ai.js の読み込みや検索欄の差し込みより先に一覧が描画されていても、
   // 栄養の計算内訳と検索欄が出るように、最後にもう一度描画する
   renderSavedView();
+
+  // 共有リンク(…/?share=トークン)から開かれたときは、共有されたレシピの確認シートを開く(recipe-import.js)
+  if(typeof handleShareLinkOnLoad === 'function') handleShareLinkOnLoad();

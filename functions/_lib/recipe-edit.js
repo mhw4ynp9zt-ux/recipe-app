@@ -13,6 +13,7 @@ export const LIMITS = {
   manual: 100000,
   steps: 30,
   step: 300,
+  sourceUrl: 500,
 };
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -103,8 +104,18 @@ export function validateDraft(raw) {
     else fields[key] = "選択肢から選んでください";
   });
 
+  // 取り込み元のURL(任意)。http(s) のURLだけ受け付ける。空・未指定は「無し」
+  let sourceUrl = "";
+  if (d.sourceUrl != null && d.sourceUrl !== "") {
+    if (typeof d.sourceUrl !== "string" || d.sourceUrl.length > LIMITS.sourceUrl || !/^https?:\/\/\S+$/i.test(d.sourceUrl.trim())) {
+      fields.sourceUrl = "取り込み元のURLが正しくありません";
+    } else {
+      sourceUrl = d.sourceUrl.trim();
+    }
+  }
+
   if (Object.keys(fields).length) return { ok: false, fields };
-  return { ok: true, value: { name, type, ingredients: ing.value, steps, ...picks } };
+  return { ok: true, value: { name, type, ingredients: ing.value, steps, ...picks, ...(sourceUrl ? { sourceUrl } : {}) } };
 }
 
 // 成分表との照合と栄養計算。入力の行は書き換えない。
@@ -136,6 +147,7 @@ export async function buildRecipe(env, draft, id) {
   METRIC_IDS.forEach((m) => { recipe[m] = nutrition[m]; });
   // 系統・役割・主材料は、draft に値があるときだけ入れる
   ["genre", "role", "main"].forEach((k) => { if (draft[k]) recipe[k] = draft[k]; });
+  if (draft.sourceUrl) recipe.sourceUrl = draft.sourceUrl;
   return recipe;
 }
 

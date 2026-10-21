@@ -25,7 +25,8 @@ function createRecipeEditor(deps) {
   const state = {
     mode: "new",
     recipeId: null,
-    draft: { name: "", type: "", genre: "", role: "", main: "", ingredients: [], steps: [] },
+    draft: { name: "", type: "", genre: "", role: "", main: "", sourceUrl: "", ingredients: [], steps: [] },
+    importInfo: null, // 取り込み(URL・テキスト)から開いたときだけ { lines, warnings, source }。元の材料の表記を画面に出すための情報
     preview: { status: "idle", data: null, forKey: null, error: "" },
     fieldErrors: {},
     saving: false,
@@ -204,6 +205,7 @@ function createRecipeEditor(deps) {
         genre: pickOption(r.genre, "genre"),
         role: pickOption(r.role, "role"),
         main: pickOption(r.main, "main"),
+        sourceUrl: typeof r.sourceUrl === "string" ? r.sourceUrl : "",
         ingredients: (r.ingredientDetails || []).map((d) => {
           const manual = {};
           for (const [id, v] of Object.entries(d.manual || {})) manual[id] = String(v);
@@ -215,12 +217,29 @@ function createRecipeEditor(deps) {
       };
       if (!state.draft.ingredients.length) state.draft.ingredients.push(blankRow());
       if (!state.draft.steps.length) state.draft.steps.push("");
+    } else if (opts.draft) {
+      // 取り込み(URL・テキスト)の下書き。グラム数が読み取れなかった行は空欄のまま(利用者が入れる)。栄養は、全行のグラム数がそろってから計算される
+      const dr = opts.draft;
+      state.recipeId = null;
+      state.draft = {
+        name: typeof dr.name === "string" ? dr.name : "",
+        type: typeof dr.type === "string" ? dr.type : "",
+        genre: "", role: "", main: "",
+        sourceUrl: typeof dr.sourceUrl === "string" ? dr.sourceUrl : "",
+        ingredients: (Array.isArray(dr.ingredients) ? dr.ingredients : []).map((i) => ({
+          name: String(i.name || ""), grams: i.grams == null ? "" : String(i.grams), manual: {},
+        })),
+        steps: (Array.isArray(dr.steps) ? dr.steps : []).map(String),
+      };
+      if (!state.draft.ingredients.length) state.draft.ingredients.push(blankRow());
+      if (!state.draft.steps.length) state.draft.steps.push("");
     } else {
       state.recipeId = null;
-      state.draft = { name: "", type: "", genre: "", role: "", main: "", ingredients: [blankRow()], steps: [""] };
+      state.draft = { name: "", type: "", genre: "", role: "", main: "", sourceUrl: "", ingredients: [blankRow()], steps: [""] };
     }
-    initialJson = JSON.stringify(state.draft);
-    state.dirty = false;
+    state.importInfo = opts.mode !== "edit" && opts.draft && opts.importInfo ? opts.importInfo : null;
+    initialJson = state.importInfo ? "" : JSON.stringify(state.draft); // 取り込み直後は「変更あり」扱い(閉じるときに確認する)
+    state.dirty = !!state.importInfo;
     schedule();
     emit();
   }
@@ -262,6 +281,7 @@ function createRecipeEditor(deps) {
     };
     // 系統・役割・主材料は、空でないものだけ送る
     ["genre", "role", "main"].forEach((k) => { if (state.draft[k]) payload[k] = state.draft[k]; });
+    if (state.draft.sourceUrl) payload.sourceUrl = state.draft.sourceUrl;
     const fail = (result) => {
       state.saveError = result.error || "";
       state.saving = false;

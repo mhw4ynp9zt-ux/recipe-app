@@ -7,6 +7,11 @@ export async function onRequestDelete({ request, env, params }) {
   const user = await getSessionUser(env, request);
   if (!user) return json({ error: "ログインが必要です" }, { status: 401 });
 
+  // 写真・共有リンクも一緒に消す(テーブルが未作成なら何もしない。作成済みなら外部キーでも消える)
+  try {
+    await env.DB.prepare("DELETE FROM recipe_shares WHERE user_id = ? AND recipe_id = ?").bind(user.id, params.id).run();
+    await env.DB.prepare("DELETE FROM recipe_photos WHERE user_id = ? AND recipe_id = ?").bind(user.id, params.id).run();
+  } catch (e) { /* 写真・共有の機能が未導入 */ }
   await env.DB.prepare("DELETE FROM recipes WHERE user_id = ? AND id = ?")
     .bind(user.id, params.id)
     .run();
