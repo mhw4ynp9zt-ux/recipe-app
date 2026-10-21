@@ -103,16 +103,12 @@ body .saved-sort select:focus{box-shadow:none; background-color:transparent;}
 .saved-tile-kcal{display:flex; align-items:baseline; gap:4px;}
 .saved-tile-kcal b{font-size:24px; font-weight:900; line-height:1; font-variant-numeric:tabular-nums;}
 .saved-tile-kcal small{font-size:11px; color:var(--ink-soft);}
-.saved-tile-grid{display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:6px 8px;}
-.saved-tile-cell{display:flex; flex-direction:column; gap:1px; min-width:0; padding-left:6px; border-left:4px solid var(--line);}
-.saved-tile-cell b{font-size:16px; font-weight:900; line-height:1.15; font-variant-numeric:tabular-nums;}
-.saved-tile-cell > span{font-size:10.5px; color:var(--ink-soft); white-space:nowrap;}
-.saved-tile-cell.m-protein{border-left-color:var(--protein);}
-.saved-tile-cell.m-fat{border-left-color:#E0A84C;}
-.saved-tile-cell.m-carbs{border-left-color:var(--carbs);}
-.saved-tile-cell.m-salt{border-left-color:var(--salt);}
-.saved-tile-chips{display:flex; flex-wrap:wrap; gap:3px;}
-.saved-tile-chip{padding:1px 6px; border-radius:8px; font-size:11px; line-height:1.5; color:var(--ink); white-space:nowrap; font-variant-numeric:tabular-nums;}
+.saved-tile-chips{display:flex; flex-wrap:wrap; gap:4px;}
+.saved-tile-chip{padding:1px 7px; border-radius:9px; font-size:11px; line-height:1.5; color:var(--ink); white-space:nowrap; font-variant-numeric:tabular-nums;}
+.saved-tile-chip.m-protein{background:var(--protein-bg);}
+.saved-tile-chip.m-fat{background:var(--fat-bg);}
+.saved-tile-chip.m-carbs{background:var(--carbs-bg);}
+.saved-tile-chip.m-salt{background:var(--salt-bg);}
 .saved-tile-chip.m-fiber{background:var(--fiber-bg);}
 .saved-tile-chip.m-veg{background:var(--veg-bg);}
 

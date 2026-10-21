@@ -81,11 +81,11 @@ try {
     const cols = await page.$eval("#saved-list", (el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
     assert.equal(cols, 2, "2列");
     const tile = await page.$eval('.saved-tile[data-id="r1"]', (el) => el.textContent);
-    ["793", "kcal", "パスタ", "59g", "たんぱく質", "20g", "脂質", "87g", "糖質", "4.9g", "塩分", "食物繊維 8.8g", "野菜 110g"].forEach((x) => assert.ok(tile.includes(x), "タイルに「" + x + "」: " + tile));
+    ["793", "kcal", "パスタ", "たんぱく質 59g", "脂質 20g", "糖質 87g", "塩分 4.9g", "食物繊維 8.8g", "野菜 110g"].forEach((x) => assert.ok(tile.includes(x), "タイルに「" + x + "」: " + tile));
     assert.ok(!/(^|[^A-Za-z])[PFC]\s?\d/.test(tile), "P/F/C の略称は使わない: " + tile);
-    assert.equal(await page.$$eval('.saved-tile[data-id="r1"] .saved-tile-cell', (e) => e.length), 4, "数字は2×2の4つ");
+    assert.deepEqual(await page.$$eval('.saved-tile[data-id="r1"] .saved-tile-chip', (e) => e.map((x) => x.className.replace("saved-tile-chip m-", ""))), ["protein", "fat", "carbs", "salt", "fiber", "veg"], "6項目が同じ形のチップで、この順に出る");
     assert.equal(await total(), "6件");
-    ok("2列のタイルで、新しい順に出る(カロリー・数字の2×2・チップ・種類)");
+    ok("2列のタイルで、新しい順に出る(カロリー・6項目のチップ・種類)");
 
     // 値の無い古いレシピも壊れない
     const oldTile = await page.$eval('.saved-tile[data-id="r6"]', (el) => el.textContent);
