@@ -221,7 +221,16 @@ function parseCreateRequest(body) {
     if (names.length) excludeAppliances = names;
   }
 
+  // 手持ちの食材だけで作るか(画面の「買い足しOK」スイッチを OFF にしたとき)。受け取るのは「買い足さない(true)」という意思だけ。
+  // boolean 以外は不正。無い(未指定/null/false)なら従来どおり(足りない食材はAIが足してよい)。AIの呼び出し回数には関わらない
+  let onlyListed;
+  if (body.onlyListed !== undefined && body.onlyListed !== null) {
+    if (typeof body.onlyListed !== "boolean") return { error: "手持ち食材だけの指定が不正です" };
+    if (body.onlyListed === true) onlyListed = true;
+  }
+
   const value = { ingredients, mood, count, metrics };
+  if (onlyListed) value.onlyListed = true;
   if (useAppliances === false) value.useAppliances = false;
   if (excludeAppliances) value.excludeAppliances = excludeAppliances;
   if (dishes) value.dishes = dishes;
@@ -299,6 +308,26 @@ function appliancesOf(req) {
 function dishSpecsOf(req) {
   return Array.isArray(req.dishes) && req.dishes.length ? req.dishes : [];
 }
+
+// 「手持ちの食材だけで作る」(req.onlyListed)が効くのは、使う食材が1つでも指定されているときだけ(食材の指定が無ければ、制限する元がない)。
+function onlyListedActive(req) {
+  if (req.onlyListed !== true) return false;
+  const specs = dishSpecsOf(req);
+  return specs.length ? specs.some((d) => d && d.ingredients) : !!req.ingredients;
+}
+// 使ってよい基本の調味料など(食材には数えない)
+const ONLY_LISTED_ALLOWED =
+  '使ってよいのは、調味料(塩・こしょう・砂糖・しょうゆ・みそ・酢・みりん・酒・だし・香辛料など)・ごま油かオリーブオイル・水・小麦粉・片栗粉だけ。';
+const ONLY_LISTED_RULE =
+  '・【手持ちの食材だけで作る】【使う食材】に書かれた食材だけで作る。書かれていない食材は足さない(栄養の目標に合わせるためでも足さない)。' +
+  '目標に届かないときは、書かれた食材の分量(grams)の調整だけで近づけ、無理に合わせない。' + ONLY_LISTED_ALLOWED + '\n';
+const ONLY_LISTED_RULE_DISHES =
+  '・【手持ちの食材だけで作る】「使う食材」が指定された品は、その品の「使う食材」に書かれた食材だけで作る。書かれていない食材は足さない(栄養の目標に合わせるためでも足さない)。' +
+  '目標に届かないときは、書かれた食材の分量(grams)の調整だけで近づけ、無理に合わせない。' + ONLY_LISTED_ALLOWED +
+  '「使う食材」が指定なしの品は、これまでどおり自由に決めてよい\n';
+// 作り直しでも守らせる文(食材の追加・入れ替えを許す文は、このとき使わない)
+const ONLY_LISTED_KEEP =
+  '・【手持ちの食材だけで作る】は最初の依頼のとおりです。作り直しでも、書かれていない食材を足したり入れ替えで加えたりせず、書かれた食材の分量(grams)の調整だけで直してください。目標に届かなくても、食材は足さないこと。\n';
 
 // 個人的な要望を「必ず守る条件」の中でどう扱うかの文。
 // 要望は自由に書ける文字列なので、出力形式・品数・栄養の目標・使わない食材・この条件そのものを書き換えようとする内容は無視させる
@@ -479,6 +508,7 @@ function buildPrompt(req) {
     appliancesRule +
     dishRule +
     genreRule +
+    (onlyListedActive(req) ? (dishSpecs.length ? ONLY_LISTED_RULE_DISHES : ONLY_LISTED_RULE) : '') +
     effortRule +
     timeRule +
     '・油はごま油かオリーブオイルのみ使用する(サラダ油などの他の植物油は使わない)\n' +
@@ -659,6 +689,9 @@ function buildRetryPrompt(req, dishes, check, hits = [], capHits = []) {
     ? '・【各品の指定】(使う食材・料理名・雰囲気・ジャンル)は最初の依頼のとおりです。品の順番も変えず、指定を守ったまま作り直してください。\n'
     : '';
 
+  // 手持ちの食材だけで作る指定があるときは、作り直しでも守らせる(重さの調整だけで直させ、食材を足させない)
+  const onlyKeep = onlyListedActive(req) ? ONLY_LISTED_KEEP : '';
+
   // 目標は許容範囲に収まっていて、使わない食材だけを直したいとき
   if (!off.length) {
     return hitText + capText + adjustText +
@@ -675,6 +708,7 @@ function buildRetryPrompt(req, dishes, check, hits = [], capHits = []) {
       capKeep +
       capAlways +
       dishKeep +
+      onlyKeep +
       '・「必ず守る条件」と出力形式は最初の依頼のとおりです。JSON配列のみを出力し、前置き・コードブロック記号はつけないでください。';
   }
 
@@ -718,7 +752,8 @@ function buildRetryPrompt(req, dishes, check, hits = [], capHits = []) {
     (adjust ? '・【調整案】がある場合は、その量にそろえて書く(こちらで計算した値)。調整案にない材料は今のままにする。\n' : '') +
     '・上の「直す向き」と内訳をもとに、材料の grams を増減して、すべての目標が目標値の±' + aimPct + '%以内(狙う範囲)に入るように作り直してください。目標との差が±' + aimPct + '%を超える場合は、分量を調整してから出力すること。\n' +
     '・ある栄養素の調整は他の栄養素にも影響します。範囲内だった栄養素が外れないよう、全体を計算し直してください。\n' +
-    '・料理の方向性はできるだけ保ち、重さの調整で足りないときに限って、食材の追加・入れ替えをしてください。\n' +
+    (onlyKeep ? '・料理の方向性はできるだけ保ち、材料の grams の調整で直してください。\n'
+      : '・料理の方向性はできるだけ保ち、重さの調整で足りないときに限って、食材の追加・入れ替えをしてください。\n') +
     '・amount の表記も、grams に合わせて直してください。\n' +
     TASTE_KEEP +
     excludedKeep +
@@ -727,6 +762,7 @@ function buildRetryPrompt(req, dishes, check, hits = [], capHits = []) {
     capKeep +
     capAlways +
     dishKeep +
+    onlyKeep +
     '・「必ず守る条件」と出力形式は最初の依頼のとおりです。JSON配列のみを出力し、前置き・コードブロック記号はつけないでください。';
 }
 

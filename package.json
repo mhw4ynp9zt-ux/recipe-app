@@ -17,7 +17,8 @@
     "test:appliances-ui": "node test/appliances-ui_test.mjs",
     "test:appliances-toggle": "node test/appliances-toggle_test.mjs && node test/appliances-toggle-ui_test.mjs",
     "test:capacity": "node test/capacity_test.mjs",
-    "test:adjust": "node test/adjust_test.mjs"
+    "test:adjust": "node test/adjust_test.mjs",
+    "test:only-listed": "node test/only-listed_test.mjs && node test/only-listed-ui_test.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.0"

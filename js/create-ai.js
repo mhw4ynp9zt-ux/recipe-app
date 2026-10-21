@@ -455,6 +455,60 @@
   document.addEventListener('appliances-changed', updateApplianceSwitchVisibility);
   updateApplianceSwitchVisibility();
 
+  // 「買い足しOK」のスイッチ(食材の入力欄のすぐ下。index.html は変更不要)。
+  //   ON(初期。従来どおり)… 入力した食材に、足りない食材をAIが足してよい
+  //   OFF … 入力した食材だけで作る(調味料・油・水などは使える)。要求に onlyListed: true を付けて送る(サーバーが条件をプロンプトに入れる)
+  // 選択はこの端末に記憶する(OFFのときだけ '0' を保存。ONに戻すと消す)。このスイッチはAIの呼び出し回数・作り直しの上限に一切関わらない。
+  // 品ごとの入力欄(#create-dishes)が無い古い画面ではスイッチを出さず、何も送らない。失敗しても作成そのものは止めない。
+  const ALLOW_EXTRA_KEY = 'recipeRouletteAllowExtraV1';
+  let allowExtra = true;
+  try { allowExtra = localStorage.getItem(ALLOW_EXTRA_KEY) !== '0'; } catch(e){ /* 読めなければ「買い足しOK」 */ }
+  let allowExtraInputEl = null;
+  function renderAllowExtraDesc(){
+    const descEl = document.getElementById('allow-extra-desc');
+    if(descEl) descEl.textContent = allowExtra
+      ? '足りない食材は、買い足す前提でAIが足して考えます。'
+      : '入力した食材だけで作ります(調味料・油・水は使えます)。食材を入力していない品は、おまかせです。';
+  }
+  function ensureAllowExtraSwitch(){
+    try {
+      if(document.getElementById('allow-extra-input')){ allowExtraInputEl = document.getElementById('allow-extra-input'); return; }
+      const anchor = document.getElementById('create-dishes');
+      if(!anchor || typeof anchor.insertAdjacentHTML !== 'function') return;
+      if(!document.getElementById('allow-extra-style') && document.head && document.createElement){
+        const style = document.createElement('style');
+        style.id = 'allow-extra-style';
+        style.textContent =
+          '.allow-extra{display:flex; align-items:center; gap:12px; margin-top:16px; padding:12px 14px; border:1.5px solid var(--line-strong); border-radius:var(--radius-sm,12px); background:var(--card); cursor:pointer;}' +
+          '.allow-extra-text{flex:1; min-width:0;}' +
+          '.allow-extra-text strong{display:block; font-size:14.5px;}' +
+          '.allow-extra-text .input-hint{margin:2px 0 0;}' +
+          '.allow-extra input{flex:0 0 auto; width:48px; height:28px; margin:0; appearance:none; -webkit-appearance:none; border-radius:999px; background:var(--line-strong); position:relative; cursor:pointer; transition:background .15s;}' +
+          '.allow-extra input::after{content:""; position:absolute; top:3px; left:3px; width:22px; height:22px; border-radius:50%; background:#fff; transition:transform .15s;}' +
+          '.allow-extra input:checked{background:var(--brand);}' +
+          '.allow-extra input:checked::after{transform:translateX(20px);}';
+        document.head.appendChild(style);
+      }
+      anchor.insertAdjacentHTML('afterend',
+        '<label class="allow-extra" id="allow-extra-row" for="allow-extra-input">' +
+          '<span class="allow-extra-text"><strong>買い足しOK</strong><span class="input-hint" id="allow-extra-desc" aria-live="polite"></span></span>' +
+          '<input type="checkbox" role="switch" id="allow-extra-input"' + (allowExtra ? ' checked' : '') + '>' +
+        '</label>');
+      allowExtraInputEl = document.getElementById('allow-extra-input');
+      if(!allowExtraInputEl) return;
+      allowExtraInputEl.addEventListener('change', () => {
+        allowExtra = !!allowExtraInputEl.checked;
+        try {
+          if(allowExtra) localStorage.removeItem(ALLOW_EXTRA_KEY);
+          else localStorage.setItem(ALLOW_EXTRA_KEY, '0');
+        } catch(e){ /* 記憶できないだけ */ }
+        renderAllowExtraDesc();
+      });
+      renderAllowExtraDesc();
+    } catch(e){ allowExtraInputEl = null; }
+  }
+  ensureAllowExtraSwitch();
+
   // チップの行(i番目が i+1品目。カードが無ければ null)。チップが画面にある品の指定だけを送る
   const effortRowEls = [];
   for(let i = 0; i < MAX_EFFORT_DISHES; i++) effortRowEls.push(effortAvailable ? document.getElementById('effort-row-' + (i + 1)) : null);
@@ -515,7 +569,7 @@
 
   // 全品の合計が目標の許容範囲(サーバーの recipe-prompt.js の TOLERANCE。現在±10%)に収まったかの表示
   // (サーバーが計算・必要ならAIに作り直させた結果)。作り直して収まった場合は、控えめに「自動調整した」ことだけ添える。
-  function renderTargetCheck(tc){
+  function renderTargetCheck(tc, onlyListed){
     if(!tc || !Array.isArray(tc.results)) return '';
     if(tc.ok){
       const adjusted = tc.attempts > 1 ? '(目標値に合わせて自動調整しました)' : '';
@@ -528,7 +582,8 @@
       return escapeHtml(label) + ' ' + r.total + unit + '(目標' + r.target + unit + '、' + (r.diffPct > 0 ? '+' : '') + r.diffPct + '%)';
     });
     return '<p class="nutrition-warn">' + tc.attempts + '回まで作り直しましたが、目標の±' + tc.tolerancePct + '%に収まらない項目が残りました: ' +
-      items.join('、') + '。食材や目標値を少し変えて、もう一度作成してみてください。</p>';
+      items.join('、') + '。食材や目標値を少し変えて、もう一度作成してみてください。' +
+      (onlyListed ? '手持ちの食材だけだと目標に届かないことがあります。「買い足しOK」にすると近づけやすくなります。' : '') + '</p>';
   }
 
   // 設定タブで「使わない食材」に登録したのに、AIが材料に入れてしまった場合の注意(サーバーが何度か作り直させても残ったときだけ届く)
@@ -607,7 +662,7 @@
     return parts.length ? '<p class="dish-macro dish-effort">' + parts.join(' ・ ') + '</p>' : '';
   }
 
-  function renderCreatedCombo(dishes, nutritionOk, targetCheck, excludedHits, effortSel, capacityHits){
+  function renderCreatedCombo(dishes, nutritionOk, targetCheck, excludedHits, effortSel, capacityHits, onlyListed){
     // effortSel: 品ごとの手間度の指定の配列(無ければ手間の注意は出さない)
     // このバッチで実際に値が入っている指標だけをバッジ・表示対象にする(選択しなかった指標は表示しない)
     const shown = NUTRIENT_METRICS.filter(m => dishes.some(d => d[m.id] != null));
@@ -624,7 +679,7 @@
         </div>` : ''}
         ${renderExcludedWarn(excludedHits)}
         ${renderCapacityWarn(capacityHits)}
-        ${nutritionOk ? renderTargetCheck(targetCheck) : ''}
+        ${nutritionOk ? renderTargetCheck(targetCheck, onlyListed) : ''}
         ${renderEffortWarn(dishes, effortSel)}
         ${dishes.map((d, i) => `
           <div class="dish-block">
@@ -769,7 +824,7 @@
       recipes.push(recipe);
       return recipe;
     });
-    renderCreatedCombo(dishes, nutritionOk, data.targetCheck, data.excludedHits, requestedEfforts(logContext.request, dishes.length), data.capacityHits);
+    renderCreatedCombo(dishes, nutritionOk, data.targetCheck, data.excludedHits, requestedEfforts(logContext.request, dishes.length), data.capacityHits, !!(logContext.request && logContext.request.onlyListed));
   }
 
   // 終了処理(成功・失敗どちらでも)。ジョブの控えを消し、待機表示を閉じる
@@ -939,6 +994,11 @@
         logContext.request.dishes = body.dishes;
         // ジョブの控え(logContext.request)にも入れ、開き直した後の超過判定でも使う
         if(dishEfforts.some(v => v !== null)) logContext.request.dishEfforts = dishEfforts;
+      }
+      // 「買い足しOK」をOFFにしているときだけ送る(スイッチが出ていないとき・ONのときは従来どおり何も付けない)
+      if(allowExtraInputEl && !allowExtra){
+        body.onlyListed = true;
+        logContext.request.onlyListed = true;
       }
       // 「使わない」を選んだ家電があるときだけ、その名前を送る(出ていないとき・すべて「使う」のときは従来どおり何も付けない)
       const excludedNow = currentExcludedAppliances();
