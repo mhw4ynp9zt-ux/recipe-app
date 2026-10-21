@@ -169,6 +169,17 @@
     return (typeof renderNutritionWarn === 'function' ? renderNutritionWarn(d) : '') + detail;
   }
 
+  // 一覧カードの栄養表示。検索条件に関わらず、7指標(NUTRIENT_METRICS)を常に全部出す。
+  // 値は recipe.nutrition[id](成分表から計算した全指標)を優先し、無ければ recipe[id]。どちらも無い指標は「ー」で示す(0は値あり)
+  function savedMacroText(d){
+    return NUTRIENT_METRICS.map(m => {
+      let v = null;
+      if(d && d.nutrition && typeof d.nutrition[m.id] === 'number' && isFinite(d.nutrition[m.id])) v = d.nutrition[m.id];
+      else if(d && typeof d[m.id] === 'number' && isFinite(d[m.id])) v = d[m.id];
+      return m.label + ' ' + (v === null ? 'ー' : v + m.unit);
+    }).join(' ・ ');
+  }
+
   // 一覧は「料理名・種類・栄養」だけを並べ、タップで材料・作り方・栄養の計算内訳を開く(新しく保存したものが上)
   // 検索欄に入力があれば、レシピ名・食材に一致するものだけを表示する。
   function renderSavedView(){
@@ -243,7 +254,7 @@
             <span class="dish-type-tag">${escapeSavedHtml(d.type)}</span>
           </div>
           ${typeof classifyTagsHtml === 'function' && typeof effectiveMain === 'function' ? '<p class="saved-class-tags">' + classifyTagsHtml(d) + '</p>' : ''}
-          <p class="saved-macro">${NUTRIENT_METRICS.filter(m => d[m.id] != null).map(m => m.label + ' ' + d[m.id] + m.unit).join(' ・ ')}</p>
+          <p class="saved-macro">${savedMacroText(d)}</p>
           <span class="chev" aria-hidden="true"></span>
         </summary>
         <div class="saved-body">
