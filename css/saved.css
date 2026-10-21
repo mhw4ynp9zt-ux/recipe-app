@@ -1,0 +1,223 @@
+/* ==========================================================
+   保存済みタブ — タイル表示・絞り込み・シート(詳細/絞り込み)・右下の＋ボタン
+   色・枠・影は、テーマ(theme-b1.css)の変数を使います。読み込み順: style.css → theme-b1.css → saved.css
+   ========================================================== */
+
+/* ---------- タイトル行 ---------- */
+.saved-head{display:flex; align-items:center; gap:10px; margin:8px 2px 12px;}
+.saved-head .view-title{margin:0; font-size:24px;}
+.saved-total{font-size:14px; font-weight:700; color:var(--ink-soft);}
+.saved-search-toggle{
+  margin-left:auto;
+  width:44px; height:44px; flex:0 0 auto;
+  display:grid; place-items:center; padding:0;
+  border:2.5px solid var(--ink); border-radius:50%;
+  background:var(--card); color:var(--ink);
+  box-shadow:2px 2px 0 var(--ink);
+  cursor:pointer;
+}
+.saved-search-toggle svg{width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round;}
+.saved-search-toggle[aria-expanded="true"]{background:var(--sun);}
+.saved-search-toggle:active{transform:translate(1px,1px); box-shadow:1px 1px 0 var(--ink);}
+.saved-login-hint{margin:-4px 4px 12px;}
+
+/* ---------- 一覧の上の操作(役割の切り替え・絞り込み・並べ替え) ---------- */
+.saved-filter{display:flex; flex-direction:column; gap:12px; margin:0 0 14px;}
+.saved-seg{
+  display:grid; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); gap:2px;
+  padding:3px; min-height:52px; box-sizing:border-box;
+  background:var(--bg-deep);
+  border:2.5px solid var(--ink); border-radius:26px;
+}
+.saved-seg button{
+  min-height:44px; padding:0 2px;
+  border:0; border-radius:22px;
+  background:transparent; color:var(--ink);
+  font:inherit; font-size:13px; font-weight:700;
+  cursor:pointer;
+}
+.saved-seg button[aria-pressed="true"]{background:var(--ink); color:var(--sun);}
+.saved-seg button:disabled{opacity:.45; cursor:default;}
+.saved-ctl-row{display:flex; align-items:center; justify-content:space-between; gap:8px;}
+.saved-filter-btn{
+  position:relative;
+  display:inline-flex; align-items:center; gap:6px;
+  min-height:44px; padding:0 14px;
+  border:2.5px solid var(--ink); border-radius:22px;
+  background:var(--card); color:var(--ink);
+  font:inherit; font-size:14px; font-weight:700;
+  box-shadow:2px 2px 0 var(--ink);
+  cursor:pointer;
+}
+.saved-filter-btn.is-active{background:var(--ink); color:var(--sun);}
+.saved-filter-badge{
+  min-width:20px; height:20px; padding:0 5px; box-sizing:border-box;
+  border-radius:10px; background:var(--accent); color:#fff;
+  font-size:12px; line-height:20px; text-align:center;
+}
+.saved-sort{display:block; margin:0;}
+body .saved-sort select{
+  width:auto; min-height:44px;
+  padding:8px 32px 8px 8px;
+  border:0; background-color:transparent;
+  font-size:14px; font-weight:700; color:var(--ink);
+  box-shadow:none;
+}
+body .saved-sort select:focus{box-shadow:none; background-color:transparent;}
+.saved-active{display:flex; flex-wrap:wrap; gap:6px;}
+.active-chip{
+  min-height:40px; padding:0 12px;
+  border:2.5px solid var(--ink); border-radius:20px;
+  background:var(--accent-soft); color:var(--ink);
+  font:inherit; font-size:13px; font-weight:700;
+  cursor:pointer;
+}
+.saved-filter .input-hint{margin:0 4px;}
+.saved-filter .input-hint:empty{display:none;}
+
+/* ---------- タイル(2列) ---------- */
+.saved-list{display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; padding-bottom:76px;}
+.saved-list:empty{padding-bottom:0;}
+.saved-tile{
+  display:flex; flex-direction:column; gap:8px;
+  min-height:156px; padding:12px; box-sizing:border-box;
+  text-align:left; font:inherit; color:var(--ink);
+  background:var(--card);
+  border:3px solid var(--ink); border-radius:18px;
+  box-shadow:4px 4px 0 var(--ink);
+  cursor:pointer;
+}
+.saved-tile:active{transform:translate(2px,2px); box-shadow:2px 2px 0 var(--ink);}
+.saved-tile-kind{
+  align-self:flex-start;
+  padding:1px 8px; border:2px solid var(--ink); border-radius:10px;
+  background:var(--accent-soft);
+  font-size:11px; font-weight:700;
+}
+.saved-tile-title{
+  flex:1; min-width:0;
+  font-family:var(--logo); font-weight:900; font-size:14px; line-height:1.4;
+  display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
+  overflow-wrap:anywhere;
+}
+.saved-tile-kcal{display:flex; align-items:baseline; gap:4px;}
+.saved-tile-kcal b{font-size:24px; font-weight:900; line-height:1; font-variant-numeric:tabular-nums;}
+.saved-tile-kcal small{font-size:11px; color:var(--ink-soft);}
+.saved-tile-protein{display:block;}
+.saved-tile-protein-row{display:flex; justify-content:space-between; gap:4px; font-size:11px; color:var(--ink-soft);}
+.saved-tile-protein-row b{color:var(--ink); font-variant-numeric:tabular-nums;}
+.saved-tile-bar{display:block; height:8px; margin-top:3px; overflow:hidden; border:1.5px solid var(--ink); border-radius:4px; background:var(--bg-deep);}
+.saved-tile-bar > span{display:block; height:100%; background:var(--accent);}
+
+/* ---------- 下から出るシート(詳細・絞り込み) ---------- */
+body.saved-sheet-open{overflow:hidden;}
+.saved-sheet-wrap{position:fixed; inset:0; z-index:60; display:flex; flex-direction:column; justify-content:flex-end;}
+.saved-sheet-backdrop{position:absolute; inset:0; background:rgba(59,47,42,.5);}
+.saved-sheet{
+  position:relative;
+  display:flex; flex-direction:column;
+  width:100%; max-width:560px; margin:0 auto;
+  max-height:92vh; max-height:92dvh;
+  background:var(--card); color:var(--ink);
+  border:3px solid var(--ink); border-bottom:0; border-radius:24px 24px 0 0;
+  animation:saved-sheet-up .22s ease-out;
+}
+@keyframes saved-sheet-up{from{transform:translateY(28px); opacity:.4;} to{transform:none; opacity:1;}}
+.saved-sheet-grip{flex:0 0 auto; width:40px; height:5px; margin:8px auto 0; border-radius:3px; background:var(--line);}
+.saved-sheet-head{flex:0 0 auto; display:flex; align-items:flex-start; justify-content:space-between; gap:8px; padding:6px 8px 0 20px;}
+.saved-sheet-head h2{margin:8px 0 0; font-family:var(--logo); font-weight:900; font-size:20px; line-height:1.4; overflow-wrap:anywhere;}
+.saved-sheet-close{
+  flex:0 0 auto; width:44px; height:44px;
+  display:grid; place-items:center; padding:0;
+  border:0; background:transparent; color:var(--ink); cursor:pointer;
+}
+.saved-sheet-scroll{flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; padding:4px 20px 16px;}
+.saved-sheet-foot{
+  flex:0 0 auto; display:flex; gap:10px;
+  padding:12px 20px calc(env(safe-area-inset-bottom) + 16px);
+  border-top:2.5px solid var(--ink); background:var(--card);
+}
+.saved-sheet-foot .btn{width:auto;}
+.saved-sheet-foot #saved-filter-apply{flex:1;}
+.saved-sheet-foot .edit-saved-btn{flex:0 0 auto; min-height:48px; padding:0 24px;}
+.saved-sheet-foot .remove-saved-btn{flex:1; margin-top:0; min-height:48px;}
+.saved-sheet-hint{margin:0; padding:0 20px calc(env(safe-area-inset-bottom) + 12px); background:var(--card);}
+
+/* 詳細シート */
+.saved-detail-tags{display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 12px;}
+.dish-class-tag{
+  padding:2px 8px; border:2px solid var(--ink); border-radius:100px;
+  background:var(--brand-soft); color:var(--ink);
+  font-size:11px; font-weight:700;
+}
+.saved-nutri-grid{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; margin:0 0 18px;}
+.saved-nutri{
+  --c:var(--brand); --c-bg:var(--brand-soft);
+  margin:0; padding:8px 10px 9px;
+  background:var(--c-bg); border:2.5px solid var(--ink); border-radius:12px;
+}
+.saved-nutri dt{font-size:11px; font-weight:900; color:var(--ink);}
+.saved-nutri dd{margin:2px 0 0; font-size:17px; font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums;}
+.saved-nutri.m-calories{grid-column:1 / -1; display:flex; align-items:baseline; justify-content:space-between;}
+.saved-nutri.m-calories dd{margin:0; font-size:22px; font-weight:900;}
+.saved-sheet .saved-body{padding:0; border-top:0;}
+
+/* 絞り込みシート */
+.filter-group{margin:0 0 6px;}
+.filter-group h3{margin:14px 0 8px; font-size:13px; font-weight:700; color:var(--ink-soft);}
+.chip-wrap{display:flex; flex-wrap:wrap; gap:6px;}
+.filter-chip{
+  min-height:44px; padding:0 16px;
+  border:2.5px solid var(--ink); border-radius:22px;
+  background:var(--card); color:var(--ink);
+  font:inherit; font-size:15px; font-weight:700;
+  cursor:pointer;
+}
+.filter-chip .chip-n{font-weight:500; color:var(--ink-soft);}
+.filter-chip[aria-pressed="true"]{background:var(--ink); color:var(--sun);}
+.filter-chip[aria-pressed="true"] .chip-n{color:var(--sun);}
+.filter-chip:disabled{background:transparent; border:2px dashed var(--line); color:var(--ink-faint); cursor:default;}
+.range-row{display:grid; grid-template-columns:5.5em minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:8px; margin-bottom:8px;}
+.range-label{font-size:14px; font-weight:700;}
+.range-sep{font-size:14px; color:var(--ink-soft);}
+.range-field{
+  display:flex; align-items:center; gap:4px;
+  min-height:44px; padding:0 10px; box-sizing:border-box; margin:0;
+  background:var(--field); border:2.5px solid var(--ink); border-radius:14px;
+}
+.range-field:focus-within{box-shadow:3px 3px 0 var(--pop);}
+body .range-field input[type="text"]{
+  flex:1; min-width:0; width:100%; padding:0;
+  border:0; background:transparent; box-shadow:none;
+  font-size:16px; font-weight:700; color:var(--ink);
+}
+body .range-field input[type="text"]:focus{border:0; background:transparent; box-shadow:none;}
+.range-unit{font-size:12px; color:var(--ink-soft);}
+.filter-more summary{min-height:44px; display:flex; align-items:center; cursor:pointer; font-size:13px; font-weight:700; color:var(--ink-soft);}
+
+/* ---------- 右下の＋(自作レシピ) ---------- */
+.new-recipe-fab{
+  position:fixed; z-index:30;
+  right:max(16px, calc(50vw - 264px));
+  bottom:calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 24px);
+  width:56px; height:56px; padding:0;
+  display:grid; place-items:center;
+  border:3px solid var(--ink); border-radius:50%;
+  background:var(--accent); color:#fff;
+  box-shadow:3px 3px 0 var(--ink);
+  cursor:pointer;
+}
+.new-recipe-fab:active{transform:translate(2px,2px); box-shadow:1px 1px 0 var(--ink);}
+.new-recipe-fab:disabled{background:var(--bg-deep); color:var(--ink-faint); box-shadow:none; cursor:default; transform:none;}
+
+/* ---------- 下部のタブバーの後ろ(スクロールしてきた一覧が、タブバーの隙間から見えて重ならないように) ---------- */
+body .view-tabs::before{
+  content:""; position:absolute; z-index:-1;
+  left:-12px; right:-12px; top:-10px;
+  bottom:calc(-1 * (env(safe-area-inset-bottom) + 10px));
+  background:var(--bg);
+}
+
+/* ---------- レシピ編集シートの分類欄(recipe-edit.js が使う。以前は saved-filter.js が差し込んでいた) ---------- */
+.re-classify{display:grid; grid-template-columns:1fr; gap:4px; margin-top:6px;}
+.re-main-auto{font-weight:400; font-size:12px; color:var(--ink-soft);}
