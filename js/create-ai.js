@@ -362,26 +362,54 @@
     removeOldTimePanel();
     for(let n = 1; n <= MAX_EFFORT_DISHES; n++) ensureEffortChips(n);
   }
-  // 「調理家電を使う/使わない」のスイッチ(「生成のたびに選ぶ」。選択はこの端末に記憶、初期は「使う」)。
-  // 設定タブに家電が登録されているログイン中だけ、「レシピを作成する」の上に出す(js/appliances.js の通知で出し分け)。
-  // 送るのは「使わない(useAppliances:false)」の意思だけ。家電の中身は送らず、サーバーが保存済みの本人の分を読む。
-  // スイッチが画面に出ていないとき(未登録・ログアウト・古い画面)は何も送らず、従来どおり。失敗しても作成そのものは止めない。
-  const USE_APPLIANCES_KEY = 'recipeRouletteUseAppliancesV1';
-  let useAppliances = true;
-  try { useAppliances = localStorage.getItem(USE_APPLIANCES_KEY) !== '0'; } catch(e){ /* 読めなければ「使う」 */ }
+  // 「調理家電を使う/使わない」のスイッチ(家電ごと。「生成のたびに選ぶ」。選択はこの端末に記憶、初期はすべて「使う」)。
+  // 設定タブに家電が登録されているログイン中だけ、「レシピを作成する」の上に、登録した家電を1台ずつ並べて出す(js/appliances.js の通知で出し分け)。
+  // 送るのは「使わない」を選んだ家電の名前(excludeAppliances)だけ。家電の中身は送らず、サーバーが保存済みの本人の分を読んで、名前が合うものを外す。
+  // スイッチが画面に出ていないとき(未登録・ログアウト・古い画面)や、すべて「使う」のときは何も送らず、従来どおり。失敗しても作成そのものは止めない。
+  const EXCLUDED_APPLIANCES_KEY = 'recipeRouletteExcludedAppliancesV1';
+  let excludedAppliances = [];   // 「使わない」を選んだ家電の名前
+  try {
+    const raw = JSON.parse(localStorage.getItem(EXCLUDED_APPLIANCES_KEY) || '[]');
+    if(Array.isArray(raw)) excludedAppliances = raw.filter(x => typeof x === 'string' && x);
+  } catch(e){ /* 読めなければ、すべて「使う」 */ }
   let applianceSwitchEl = null;
+  function applianceNames(){
+    return typeof window.getSavedApplianceNames === 'function' ? window.getSavedApplianceNames() : [];
+  }
+  function saveExcludedAppliances(){
+    try { localStorage.setItem(EXCLUDED_APPLIANCES_KEY, JSON.stringify(excludedAppliances)); } catch(e){ /* 記憶できないだけ */ }
+  }
   function renderApplianceSwitch(){
     if(!applianceSwitchEl) return;
-    const btns = applianceSwitchEl.querySelectorAll('.appliance-use-btn');
-    btns.forEach(b => {
-      const on = (b.dataset.use === '1') === useAppliances;
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const list = applianceSwitchEl.querySelector('.appliance-use-list');
+    if(!list) return;
+    list.textContent = '';
+    applianceNames().forEach(name => {
+      const off = excludedAppliances.includes(name);
+      const row = document.createElement('div');
+      row.className = 'field appliance-use-row';
+      const label = document.createElement('label');
+      label.textContent = name;
+      const group = document.createElement('div');
+      group.className = 'count-toggle';
+      group.setAttribute('role', 'group');
+      group.setAttribute('aria-label', name + 'を使うか');
+      [['1', '使う', !off], ['0', '使わない', off]].forEach(([v, text, on]) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'toggle-btn appliance-use-btn' + (on ? ' active' : '');
+        b.dataset.use = v;
+        b.dataset.name = name;
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        b.textContent = text;
+        group.appendChild(b);
+      });
+      row.appendChild(label);
+      row.appendChild(group);
+      list.appendChild(row);
     });
     const hint = applianceSwitchEl.querySelector('.appliance-use-hint');
-    if(hint) hint.textContent = useAppliances
-      ? '設定タブに登録した調理家電でできる作り方で考えます。'
-      : '登録した調理家電は使わず、コンロやフライパンなどで作れる作り方で考えます。';
+    if(hint) hint.textContent = '「使う」にした家電でできる作り方で考えます。「使わない」の家電は、コンロやフライパンなど別の作り方になります。';
   }
   function ensureApplianceSwitch(){
     try {
@@ -391,10 +419,7 @@
       area.insertAdjacentHTML('beforebegin',
         '<section class="panel step" id="appliance-use-panel" hidden>' +
           '<div class="step-head"><h2>調理家電</h2><span class="step-tag">任意</span></div>' +
-          '<div class="count-toggle" role="group" aria-label="調理家電を使うか">' +
-            '<button type="button" class="toggle-btn appliance-use-btn" data-use="1">使う</button>' +
-            '<button type="button" class="toggle-btn appliance-use-btn" data-use="0">使わない</button>' +
-          '</div>' +
+          '<div class="appliance-use-list"></div>' +
           '<p class="input-hint appliance-use-hint" aria-live="polite"></p>' +
         '</section>');
       applianceSwitchEl = document.getElementById('appliance-use-panel');
@@ -402,22 +427,29 @@
       applianceSwitchEl.addEventListener('click', (e) => {
         const btn = e.target.closest && e.target.closest('.appliance-use-btn');
         if(!btn) return;
-        useAppliances = btn.dataset.use === '1';
-        try { localStorage.setItem(USE_APPLIANCES_KEY, useAppliances ? '1' : '0'); } catch(err){ /* 記憶できないだけ */ }
+        const name = btn.dataset.name;
+        excludedAppliances = excludedAppliances.filter(x => x !== name);
+        if(btn.dataset.use === '0') excludedAppliances.push(name);
+        saveExcludedAppliances();
         renderApplianceSwitch();
       });
-      renderApplianceSwitch();
     } catch(e){ applianceSwitchEl = null; }
   }
   function applianceSwitchVisible(){
     return !!applianceSwitchEl && !applianceSwitchEl.hidden;
   }
+  // 画面に出ている(いま登録されている)家電のうち「使わない」のものの名前
+  function currentExcludedAppliances(){
+    if(!applianceSwitchVisible()) return [];
+    const names = applianceNames();
+    return excludedAppliances.filter(x => names.includes(x));
+  }
   function updateApplianceSwitchVisibility(){
     try {
       ensureApplianceSwitch();
       if(!applianceSwitchEl) return;
-      const count = typeof window.getSavedApplianceCount === 'function' ? window.getSavedApplianceCount() : 0;
-      applianceSwitchEl.hidden = !(isLoggedIn() && count > 0);
+      renderApplianceSwitch();
+      applianceSwitchEl.hidden = !(isLoggedIn() && applianceNames().length > 0);
     } catch(e){ /* 出し分けできなくても、作成そのものは止めない */ }
   }
   document.addEventListener('appliances-changed', updateApplianceSwitchVisibility);
@@ -908,10 +940,11 @@
         // ジョブの控え(logContext.request)にも入れ、開き直した後の超過判定でも使う
         if(dishEfforts.some(v => v !== null)) logContext.request.dishEfforts = dishEfforts;
       }
-      // 調理家電のスイッチが画面にあり「使わない」のときだけ送る(出ていないとき・「使う」のときは従来どおり何も付けない)
-      if(applianceSwitchVisible() && !useAppliances){
-        body.useAppliances = false;
-        logContext.request.useAppliances = false;
+      // 「使わない」を選んだ家電があるときだけ、その名前を送る(出ていないとき・すべて「使う」のときは従来どおり何も付けない)
+      const excludedNow = currentExcludedAppliances();
+      if(excludedNow.length){
+        body.excludeAppliances = excludedNow;
+        logContext.request.excludeAppliances = excludedNow;
       }
       const requestBody = JSON.stringify(body);
       // ジョブを作るだけの短い要求(AIは呼ばれない)。応答が返る前に通信が切れた場合(iOS Safariでは TypeError "Load failed")だけ、

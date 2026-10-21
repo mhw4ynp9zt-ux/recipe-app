@@ -441,6 +441,7 @@
 
   // レシピ作成画面(create-ai.js)の「調理家電を使う/使わない」スイッチが、登録の有無で出し分けるための通知(通信はしない)
   window.getSavedApplianceCount = function(){ return saved.length; };
+  window.getSavedApplianceNames = function(){ return saved.map(a => a.name).filter(Boolean); };
   function notifyAppliancesChanged(){
     try { document.dispatchEvent(new CustomEvent('appliances-changed', { detail: { count: saved.length } })); } catch(e){ /* 通知できなくても、登録・保存は止めない */ }
   }

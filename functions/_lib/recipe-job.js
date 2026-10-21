@@ -35,10 +35,13 @@
 //     作り直しの回数・AI呼び出しの上限(MAX_ATTEMPTS / MAX_AI_CALLS)は変わらない(=1回の作成で費用が増える上限は変わらない)。
 //     画面のスイッチで「調理家電を使わない」を選んだとき(request.useAppliances === false)は、家電を読まず、指示にも容量チェックにも入れない
 //     (受け取るのはこの true/false だけ。家電の中身は画面から受け取らない)。
+//     家電ごとに「使わない」を選んだとき(request.excludeAppliances。名前だけ)は、その家電だけを外す(名前は全角半角・大文字小文字・空白を無視して比べる)。
 //     容量で作り直したくないときは CAPACITY_RETRY を false にする(超えた品は result.capacityHits で知らせるだけになる)
 //
 // 依存(AI設定・プロンプト・栄養計算など)は deps で受け取る。本番は recipe-job-deps.js の defaultDeps、
 // テストでは偽物を渡して、実際のAI(有料)を呼ばずに動かせる。
+
+import { applianceKey } from "./appliances.js"; // 名前を比べる印を作るだけの小さな関数(DBもAIも使わない)
 
 export const MAX_ATTEMPTS = 3;                  // 目標に収まらないとき、最大で何回作るか(最初の1回を含む)
 export const MAX_AI_CALLS = MAX_ATTEMPTS + 1;   // 1ジョブでAIを呼べる絶対の上限(引き継ぎで1回無駄になっても超えない)
@@ -198,8 +201,14 @@ async function startJob(env, user, body, deps, now = Date.now()) {
   // 家電が効かないまま作らないよう、利用回数を消費する前に失敗にする。
   // 画面のスイッチで「調理家電を使わない」(req.useAppliances === false)と指定されたときは、読まずに空にする
   // (AIへの指示にも、容量チェックにも家電が入らない。AIの呼び出し回数・上限は変わらない)。
+  // 家電ごとの「使わない」指定(req.excludeAppliances。名前の配列)に合うものは、読んだあとで外す。
   try {
-    req.appliances = req.useAppliances !== false && deps.loadAppliances ? await deps.loadAppliances(env, user.id) : [];
+    let list = req.useAppliances !== false && deps.loadAppliances ? await deps.loadAppliances(env, user.id) : [];
+    if (Array.isArray(req.excludeAppliances) && req.excludeAppliances.length) {
+      const skip = new Set(req.excludeAppliances.map(applianceKey));
+      list = list.filter((a) => !skip.has(applianceKey(a.name)));
+    }
+    req.appliances = list;
   } catch (e) {
     console.error("loadAppliances failed: " + (e && e.message));
     trace.error("load_appliances_failed", e);
@@ -224,6 +233,7 @@ async function startJob(env, user, body, deps, now = Date.now()) {
     personalNotesCount: req.personalNotes.length,
     appliancesCount: req.appliances.length,
     useAppliances: req.useAppliances !== false,
+    excludedAppliancesCount: Array.isArray(req.excludeAppliances) ? req.excludeAppliances.length : 0,
   });
   if (!ai.apiKey) {
     trace.add("no_api_key", { reason: ai.keyError ? "保存済みのAPIキーを復号できません(SETTINGS_ENC_KEYが変わった可能性)" : "APIキーが未設定です" }, "error");
