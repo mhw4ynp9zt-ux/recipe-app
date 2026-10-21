@@ -81,13 +81,11 @@ try {
     const cols = await page.$eval("#saved-list", (el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
     assert.equal(cols, 2, "2列");
     const tile = await page.$eval('.saved-tile[data-id="r1"]', (el) => el.textContent);
-    ["793", "kcal", "パスタ", "たんぱく質", "59g", "脂質", "20g", "糖質", "87g", "塩分", "4.9g", "食物繊維", "8.8g", "野菜", "110g"].forEach((x) => assert.ok(tile.includes(x), "タイルに「" + x + "」: " + tile));
+    ["793", "kcal", "パスタ", "59g", "たんぱく質", "20g", "脂質", "87g", "糖質", "4.9g", "塩分", "食物繊維 8.8g", "野菜 110g"].forEach((x) => assert.ok(tile.includes(x), "タイルに「" + x + "」: " + tile));
     assert.ok(!/(^|[^A-Za-z])[PFC]\s?\d/.test(tile), "P/F/C の略称は使わない: " + tile);
-    // ミニバーの長さ(満タンの目安: たんぱく質80・脂質40・糖質120・塩分4・食物繊維10・野菜200)
-    const bars = await page.$$eval('.saved-tile[data-id="r1"] .saved-tile-bar > span', (els) => els.map((e) => e.style.width));
-    assert.deepEqual(bars, ["74%", "49%", "73%", "100%", "88%", "55%"], "6項目のバー(塩分は目安超えで満タン)");
+    assert.equal(await page.$$eval('.saved-tile[data-id="r1"] .saved-tile-cell', (e) => e.length), 4, "数字は2×2の4つ");
     assert.equal(await total(), "6件");
-    ok("2列のタイルで、新しい順に出る(カロリー・6項目のミニバー・種類)");
+    ok("2列のタイルで、新しい順に出る(カロリー・数字の2×2・チップ・種類)");
 
     // 値の無い古いレシピも壊れない
     const oldTile = await page.$eval('.saved-tile[data-id="r6"]', (el) => el.textContent);
