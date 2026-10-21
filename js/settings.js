@@ -338,11 +338,7 @@
     });
     if(excludedCountEl) excludedCountEl.textContent = '登録済み: ' + excludedFoods.length + ' / ' + excludedLimits.max + ' 件';
     renderCreateExcludedHint();
-    try { document.dispatchEvent(new CustomEvent('excluded-foods-changed')); } catch(e){ /* 通知できなくても、登録そのものは続ける */ }
   }
-  // 「作る」タブの「今回だけの設定」が、登録済みの使わない食材を知るための窓口(読むだけ)
-  window.getSavedExcludedFoods = function(){ return excludedFoods.slice(); };
-  document.addEventListener('excluded-foods-skip-changed', () => renderCreateExcludedHint());
 
   // 「作る」タブのお知らせ。登録があるときだけ、何件が自動で除外されるかを知らせる
   function renderCreateExcludedHint(){
@@ -353,10 +349,7 @@
       return;
     }
     const shown = excludedFoods.slice(0, 5).join('、') + (excludedFoods.length > 5 ? ' ほか' : '');
-    const skipped = typeof window.isExcludedFoodsSkipped === 'function' && window.isExcludedFoodsSkipped();
-    createExcludedHintEl.appendChild(document.createTextNode(skipped
-      ? '今回は、使わない食材 ' + excludedFoods.length + '件(' + shown + ')を除外しません。'
-      : '使わない食材 ' + excludedFoods.length + '件(' + shown + ')は、自動で除外されます。'));
+    createExcludedHintEl.appendChild(document.createTextNode('使わない食材 ' + excludedFoods.length + '件(' + shown + ')は、自動で除外されます。'));
     const link = document.createElement('button');
     link.type = 'button';
     link.className = 'link-btn';
