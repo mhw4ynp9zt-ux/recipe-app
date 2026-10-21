@@ -10,9 +10,10 @@ import { isAdminUser } from "./session.js";
 import { loadExcludedFoods, findExcludedHits } from "./excluded-foods.js";
 import { loadPersonalNotes } from "./personal-notes.js";
 import { loadAppliances } from "./appliances.js";
+import { findCapacityHits } from "./appliance-capacity.js";
 
 export const defaultDeps = {
   parseCreateRequest, buildPrompt, buildRetryPrompt, checkTargets, maxTokensFor, parseDishes, TOLERANCE,
   attachNutrition, createTrace, loadAiSettings, reserveUsage, refundUsage, isAdminUser,
-  loadExcludedFoods, findExcludedHits, loadPersonalNotes, loadAppliances,
+  loadExcludedFoods, findExcludedHits, loadPersonalNotes, loadAppliances, findCapacityHits,
 };

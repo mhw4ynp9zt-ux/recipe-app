@@ -31,12 +31,16 @@
 //   ・startJob がDBから読み(読むだけ。AIは呼ばない)、ジョブの条件(request.appliances)に入れる。画面から送られた値は使わない
 //   ・AIへの指示は buildPrompt / buildRetryPrompt が作る。守れたかどうかはコードで判定できないため、作り直しの条件には使わない
 //     (=AIの呼び出し回数は、家電の有無で変わらない。MAX_ATTEMPTS / MAX_AI_CALLS も変わらない)
+//     ただし「容量」だけは例外: 家電の容量(spec.capacity)の最大を超える品は、コード(appliance-capacity.js)で見つけて作り直しの対象にする。
+//     作り直しの回数・AI呼び出しの上限(MAX_ATTEMPTS / MAX_AI_CALLS)は変わらない(=1回の作成で費用が増える上限は変わらない)。
+//     容量で作り直したくないときは CAPACITY_RETRY を false にする(超えた品は result.capacityHits で知らせるだけになる)
 //
 // 依存(AI設定・プロンプト・栄養計算など)は deps で受け取る。本番は recipe-job-deps.js の defaultDeps、
 // テストでは偽物を渡して、実際のAI(有料)を呼ばずに動かせる。
 
 export const MAX_ATTEMPTS = 3;                  // 目標に収まらないとき、最大で何回作るか(最初の1回を含む)
 export const MAX_AI_CALLS = MAX_ATTEMPTS + 1;   // 1ジョブでAIを呼べる絶対の上限(引き継ぎで1回無駄になっても超えない)
+const CAPACITY_RETRY = true;                  // 家電の容量を超えた品を、作り直しの理由にするか(false なら知らせるだけ。費用が気になるときの切り替え)
 const AI_URL = "https://api.x.ai/v1/chat/completions";
 // AIの1回の呼び出しの上限。考える時間が長いモデル(reasoning)は、返答を書き始める前に1分近く考えることがある。
 // 途中で打ち切ると、それまでの分の料金だけかかって結果が得られないため、従来(60秒)より少し長めにする。
@@ -349,6 +353,7 @@ async function finishJob(env, deps, job, { best, attempts, trace, stepStart, now
     };
   }
   if (best.hits && best.hits.length) result.excludedHits = best.hits;
+  if (best.capacityHits && best.capacityHits.length) result.capacityHits = best.capacityHits;
   await run(env,
     `UPDATE recipe_jobs SET status = 'done', stage = 'done', progress = 100, result = ?, trace = ?, attempt = ?,
        active_ms = ?, lease_until = 0, updated_at = ? WHERE id = ? AND status = 'running'`,
@@ -375,7 +380,7 @@ function mergedTrace(job, trace, stepStart) {
 }
 
 // 2つの結果のうち、どちらが「より良いか」。使わない食材が残っている数が少ない方を優先し、同じなら目標に近い方。
-const hitCount = (b) => (b && b.hits ? b.hits.length : 0);
+const hitCount = (b) => (b && b.hits ? b.hits.length : 0) + (CAPACITY_RETRY && b && b.capacityHits ? b.capacityHits.length : 0);
 const isBetter = (a, b) => (hitCount(a) !== hitCount(b) ? hitCount(a) < hitCount(b) : a.check.worst < b.check.worst);
 
 // 1回分(AI呼び出し→栄養計算→目標チェック)。返り値: "continue"(作り直しへ進む) / "end"(完成か失敗で終わった)
@@ -462,6 +467,9 @@ async function runAttempt(env, deps, job, live, { isAdmin, now }) {
   // 使わない食材が入っていないか確認する(AIは呼ばない。名前の照合だけ)
   const excluded = Array.isArray(req.excluded) ? req.excluded : [];
   const hits = excluded.length && deps.findExcludedHits ? deps.findExcludedHits(dishes, excluded) : [];
+  // 家電の容量(最大ml)を超えている品がないか確認する(AIは呼ばない。計算だけ)
+  const capacityHits = deps.findCapacityHits ? deps.findCapacityHits(dishes, req.appliances || []) : [];
+  const capRetryHits = CAPACITY_RETRY ? capacityHits : [];
 
   // 栄養量は成分表から計算する。失敗してもAIのレシピ自体は返す(利用回数も戻さない)。
   const aiEndedAt = now();
@@ -477,13 +485,13 @@ async function runAttempt(env, deps, job, live, { isAdmin, now }) {
   }
   if (!nutritionOk) {
     // 計算できないので、目標に収まったか確かめようがない。作り直しはしない
-    if (!best) best = { dishes, nutritionOk: false, check: null, hits };
+    if (!best) best = { dishes, nutritionOk: false, check: null, hits, capacityHits };
     await finish(best, n);
     return "end";
   }
 
   const check = deps.checkTargets(dishes, req.metrics);
-  const ok = check.ok && hits.length === 0; // 目標に収まり、かつ使わない食材も入っていない
+  const ok = check.ok && hits.length === 0 && capRetryHits.length === 0; // 目標に収まり、使わない食材も入っておらず、家電の容量も超えていない
   const activeMs = job.active_ms + (now() - stepStart);
   // 所要時間の内訳(遅いと感じたときの原因調査用)。全体が45秒を超えたら warn にして、管理者のログに必ず残す
   trace.add("timing", {
@@ -498,9 +506,10 @@ async function runAttempt(env, deps, job, live, { isAdmin, now }) {
     results: check.results.map((r) => r.id + ": 目標" + r.target + " / 合計" + r.total + " (" + (r.diffPct > 0 ? "+" : "") + r.diffPct.toFixed(1) + "%)" + (r.ok ? "" : " NG")),
     unmatched: [...new Set(dishes.flatMap((d) => (d.nutritionCheck && d.nutritionCheck.unmatched) || []))],
     ...(hits.length ? { excludedHits: hits } : {}),
+    ...(capacityHits.length ? { capacityHits } : {}),
     ...(retrying ? { retrying: true } : {}),
   }, ok || retrying ? "info" : "warn");
-  const candidate = { dishes, nutritionOk: true, check, hits };
+  const candidate = { dishes, nutritionOk: true, check, hits, capacityHits };
   if (!best || isBetter(candidate, best)) best = candidate;
   if (ok) { await finish(best, n); return "end"; }
   if (!canRetry) {
@@ -515,7 +524,7 @@ async function runAttempt(env, deps, job, live, { isAdmin, now }) {
 
   // 作り直しへ: 前回の合計と目標との差・食材ごとの内訳(使わない食材が入っていたら、その名前も)を伝える会話を作って保存する
   messages.push({ role: "assistant", content });
-  messages.push({ role: "user", content: deps.buildRetryPrompt(req, dishes, check, hits) });
+  messages.push({ role: "user", content: deps.buildRetryPrompt(req, dishes, check, hits, capRetryHits) });
   const nextPlan = planFor(n + 1);
   Object.assign(job, {
     attempt: n, messages: JSON.stringify(messages), best: JSON.stringify(best), expected_chars: content.length,
