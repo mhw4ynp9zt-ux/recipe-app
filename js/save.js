@@ -209,7 +209,7 @@
     return v === null ? 'ー' : v + m.unit;
   }
 
-  // タイルに出す数値の文字。digits=小数の桁数(幅に収めるため、たんぱく質・脂質・糖質・野菜は0、塩分・食物繊維は1)。
+  // タイルに出す数値の文字。digits=小数の桁数(幅に収めるため、塩分・食物繊維は1、ほかは0)。
   // 値が無いときは「ー」。詳細シートには従来どおり小数のまま出る
   function savedTileNum(v, unit, digits){
     if(v === null) return 'ー';
@@ -217,21 +217,29 @@
     return String(Math.round(v * k) / k) + unit;
   }
 
-  // 一覧のタイル1枚。「種類・料理名・カロリー・数字の2×2(たんぱく質・脂質・糖質・塩分)・食物繊維と野菜のチップ」を出し、
+  // タイルに出す6項目(この順)。どれも同じ形の色付きチップで出す
+  const SAVED_TILE_CHIPS = [
+    { id: 'protein', label: 'たんぱく質', digits: 0 },
+    { id: 'fat',     label: '脂質',       digits: 0 },
+    { id: 'carbs',   label: '糖質',       digits: 0 },
+    { id: 'salt',    label: '塩分',       digits: 1 },
+    { id: 'fiber',   label: '食物繊維',   digits: 1 },
+    { id: 'veg',     label: '野菜',       digits: 0 },
+  ];
+
+  // 一覧のタイル1枚。「種類・料理名・カロリー・6項目のチップ(たんぱく質・脂質・糖質・塩分・食物繊維・野菜)」を出し、
   // 材料・作り方・栄養の計算内訳は、タップで開くレシピの詳細シート(saved-sheet.js)に出す
   function savedTileHtml(d){
     const esc = escapeSavedHtml;
     const kcal = savedMetricValue(d, 'calories');
-    const cell = (id, label, digits) => '<span class="saved-tile-cell m-' + id + '"><b>' + savedTileNum(savedMetricValue(d, id), 'g', digits) + '</b><span>' + label + '</span></span>';
-    const chip = (id, label) => '<span class="saved-tile-chip m-' + id + '">' + label + ' ' + savedTileNum(savedMetricValue(d, id), 'g', id === 'fiber' ? 1 : 0) + '</span>';
+    const chip = (m) => '<span class="saved-tile-chip m-' + m.id + '">' + m.label + ' ' + savedTileNum(savedMetricValue(d, m.id), 'g', m.digits) + '</span>';
     const photoSrc = typeof recipePhotoSrc === 'function' ? recipePhotoSrc(d) : '';
     return '<button type="button" class="saved-tile" data-id="' + esc(d.id) + '" aria-haspopup="dialog">' +
       (photoSrc ? '<span class="saved-tile-photo"><img src="' + esc(photoSrc) + '" alt="" loading="lazy" decoding="async"></span>' : '') +
       (d.type ? '<span class="saved-tile-kind">' + esc(d.type) + '</span>' : '') +
       '<span class="saved-tile-title">' + esc(d.name) + '</span>' +
       '<span class="saved-tile-kcal"><b>' + (kcal === null ? 'ー' : esc(kcal)) + '</b><small>kcal</small></span>' +
-      '<span class="saved-tile-grid">' + cell('protein', 'たんぱく質', 0) + cell('fat', '脂質', 0) + cell('carbs', '糖質', 0) + cell('salt', '塩分', 1) + '</span>' +
-      '<span class="saved-tile-chips">' + chip('fiber', '食物繊維') + chip('veg', '野菜') + '</span>' +
+      '<span class="saved-tile-chips">' + SAVED_TILE_CHIPS.map(chip).join('') + '</span>' +
     '</button>';
   }
 
