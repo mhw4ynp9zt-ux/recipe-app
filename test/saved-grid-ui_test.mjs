@@ -81,9 +81,11 @@ try {
     const cols = await page.$eval("#saved-list", (el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
     assert.equal(cols, 2, "2列");
     const tile = await page.$eval('.saved-tile[data-id="r1"]', (el) => el.textContent);
-    assert.ok(tile.includes("793") && tile.includes("kcal") && tile.includes("59.3g") && tile.includes("パスタ"), "タイルにはカロリー・たんぱく質・種類: " + tile);
-    const w = await page.$eval('.saved-tile[data-id="r1"] .saved-tile-bar > span', (el) => el.style.width);
-    assert.equal(w, "74%", "たんぱく質バー(59.3/80)");
+    ["793", "kcal", "パスタ", "P 59g", "F 20g", "C 87g", "塩分 4.9g", "繊維 8.8g", "野菜 110g"].forEach((t) => assert.ok(tile.includes(t), "タイルに「" + t + "」: " + tile));
+    // PFCバー: カロリーへの寄与(P×4・F×9・C×4)の比率。59.3×4=237.2 / 19.6×9=176.4 / 87.3×4=349.2(合計762.8)
+    const seg = await page.$$eval('.saved-tile[data-id="r1"] .saved-tile-bar > span', (els) => els.map((e) => parseFloat(e.style.width)));
+    assert.deepEqual(seg.map((x) => Math.round(x)), [31, 23, 46], "PFCバーの比率");
+    assert.ok(Math.abs(seg.reduce((a, b) => a + b, 0) - 100) < 0.5, "合計100%");
     assert.equal(await total(), "6件");
     ok("2列のタイルで、新しい順に出る(カロリー・たんぱく質のバー・種類)");
 
@@ -128,8 +130,12 @@ try {
     assert.equal(await page.$eval(".app", (a) => a.inert), true, "後ろの画面は操作できない");
     assert.equal(await page.$eval("body", (b) => getComputedStyle(b).overflow), "hidden", "後ろの画面はスクロールしない");
     const sheetText = await page.textContent("#saved-filter-sheet");
-    ["系統", "主材料", "栄養", "たんぱく質", "カロリー", "塩分", "ほかの栄養(野菜・脂質・食物繊維・糖質)"].forEach((t) => assert.ok(sheetText.includes(t), "シートに「" + t + "」"));
+    ["系統", "主材料", "たんぱく質", "カロリー", "塩分", "野菜", "脂質", "食物繊維", "糖質"].forEach((t) => assert.ok(sheetText.includes(t), "シートに「" + t + "」"));
     assert.equal(sheetText.includes("役割"), false, "役割は一覧の上の切り替え側にある");
+    assert.equal(sheetText.includes("ほかの栄養"), false, "「ほかの栄養」の見出しは無い");
+    assert.equal(await page.$("#saved-filter-sheet details"), null, "折りたたみは無い");
+    assert.deepEqual(await page.$$eval("#saved-filter-sheet .range-row .range-label", (e) => e.map((x) => x.textContent.trim())), ["たんぱく質", "カロリー", "塩分", "野菜", "脂質", "食物繊維", "糖質"], "7指標が1つのリストに並ぶ");
+    for (const el of await page.$$("#saved-filter-sheet .range-row input")) assert.equal(await el.isVisible(), true, "最初から見えている");
     assert.equal(await page.$eval('#saved-filter-sheet [data-axis="genre"][data-value="韓国"]', (b) => b.disabled), true, "0件のチップは押せない");
     await shot("03-sheet");
 
@@ -141,8 +147,7 @@ try {
     await page.waitForTimeout(100);
     assert.deepEqual(await titles(), ["鶏むねのチーズ焼き"], "洋食 かつ たんぱく質30g以上");
     assert.equal(await page.$eval("#saved-filter-apply", (b) => b.textContent.trim()), "1件を表示する");
-    // 折りたたみの中の指標も指定できる
-    await page.click("#saved-filter-more summary");
+    // 野菜(以前は折りたたみの中だった指標)も、そのまま指定できる
     await page.fill('#saved-filter-sheet [data-range="veg:max"]', "10");
     await page.waitForTimeout(100);
     assert.deepEqual(await titles(), ["鶏むねのチーズ焼き"]);

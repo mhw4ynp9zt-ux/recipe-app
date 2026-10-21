@@ -103,11 +103,19 @@ body .saved-sort select:focus{box-shadow:none; background-color:transparent;}
 .saved-tile-kcal{display:flex; align-items:baseline; gap:4px;}
 .saved-tile-kcal b{font-size:24px; font-weight:900; line-height:1; font-variant-numeric:tabular-nums;}
 .saved-tile-kcal small{font-size:11px; color:var(--ink-soft);}
-.saved-tile-protein{display:block;}
-.saved-tile-protein-row{display:flex; justify-content:space-between; gap:4px; font-size:11px; color:var(--ink-soft);}
-.saved-tile-protein-row b{color:var(--ink); font-variant-numeric:tabular-nums;}
-.saved-tile-bar{display:block; height:8px; margin-top:3px; overflow:hidden; border:1.5px solid var(--ink); border-radius:4px; background:var(--bg-deep);}
-.saved-tile-bar > span{display:block; height:100%; background:var(--accent);}
+.saved-tile-pfc{display:block;}
+.saved-tile-bar{display:flex; height:9px; overflow:hidden; border:1.5px solid var(--ink); border-radius:5px; background:var(--bg-deep);}
+.saved-tile-bar > span{display:block; height:100%;}
+.saved-tile-bar .seg-p{background:var(--protein);}
+.saved-tile-bar .seg-f{background:#E0A84C;}
+.saved-tile-bar .seg-c{background:var(--veg);}
+.saved-tile-pfc-row{display:flex; justify-content:space-between; gap:4px; margin-top:3px; font-size:11px; color:var(--ink-soft); white-space:nowrap;}
+.saved-tile-pfc-row b{color:var(--ink); font-weight:700; font-variant-numeric:tabular-nums;}
+.saved-tile-chips{display:flex; flex-wrap:wrap; gap:3px;}
+.saved-tile-chip{padding:1px 6px; border-radius:8px; font-size:11px; line-height:1.5; color:var(--ink); white-space:nowrap; font-variant-numeric:tabular-nums;}
+.saved-tile-chip.c-salt{background:var(--salt-bg);}
+.saved-tile-chip.c-fiber{background:var(--fiber-bg);}
+.saved-tile-chip.c-veg{background:var(--veg-bg);}
 
 /* ---------- 下から出るシート(詳細・絞り込み) ---------- */
 body.saved-sheet-open{overflow:hidden;}
@@ -177,12 +185,12 @@ body.saved-sheet-open{overflow:hidden;}
 .filter-chip[aria-pressed="true"]{background:var(--ink); color:var(--sun);}
 .filter-chip[aria-pressed="true"] .chip-n{color:var(--sun);}
 .filter-chip:disabled{background:transparent; border:2px dashed var(--line); color:var(--ink-faint); cursor:default;}
-.range-row{display:grid; grid-template-columns:5.5em minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:8px; margin-bottom:8px;}
+.range-row{display:grid; grid-template-columns:5.5em minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:8px; margin-bottom:6px;}
 .range-label{font-size:14px; font-weight:700;}
 .range-sep{font-size:14px; color:var(--ink-soft);}
 .range-field{
   display:flex; align-items:center; gap:4px;
-  min-height:44px; padding:0 10px; box-sizing:border-box; margin:0;
+  min-height:40px; padding:0 10px; box-sizing:border-box; margin:0;
   background:var(--field); border:2.5px solid var(--ink); border-radius:14px;
 }
 .range-field:focus-within{box-shadow:3px 3px 0 var(--pop);}
@@ -193,7 +201,6 @@ body .range-field input[type="text"]{
 }
 body .range-field input[type="text"]:focus{border:0; background:transparent; box-shadow:none;}
 .range-unit{font-size:12px; color:var(--ink-soft);}
-.filter-more summary{min-height:44px; display:flex; align-items:center; cursor:pointer; font-size:13px; font-weight:700; color:var(--ink-soft);}
 
 /* ---------- 右下の＋(自作レシピ) ---------- */
 .new-recipe-fab{

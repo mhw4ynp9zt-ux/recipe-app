@@ -4,7 +4,7 @@
 // 読み込み順: config.js → recipe-classify.js → save.js → saved-sheet.js → saved-filter.js → main.js(index.html には <script> だけを足す)。
 // 画面の構成(css/saved.css):
 //   ・一覧の上に常に出る: 役割の切り替え(すべて/主菜/副菜/汁物/主食)、「詳しく絞り込む」ボタン、並べ替え、適用中の条件(×で外せる)
-//   ・「詳しく絞り込む」を押すと下から出るシート: 系統・主材料のチップ、栄養の最小・最大(たんぱく質・カロリー・塩分。ほかの栄養は折りたたみ)
+//   ・「詳しく絞り込む」を押すと下から出るシート: 系統・主材料のチップ、栄養の最小・最大(7指標すべてを最初から表示)
 // 絞り込みの条件と並べ替えは、この画面を開いている間だけ覚えます(端末には保存しません)。
 
 // recipe-classify.js が読み込めなかった場合は null(その場合、絞り込みは無効で、保存済みタブは従来どおり検索だけで動く)
@@ -24,9 +24,8 @@ const SAVED_SHEET_AXES = [
   { axis: 'genre', title: '系統' },
   { axis: 'main', title: '主材料' },
 ];
-// 栄養の範囲。最初から見せる指標と、折りたたみの中の指標
-const FILTER_RANGE_MAIN = ['protein', 'calories', 'salt'];
-const FILTER_RANGE_MORE = ['veg', 'fat', 'fiber', 'carbs'];
+// 栄養の範囲。7指標すべてを、折りたたまずに最初から並べる(この順)
+const FILTER_RANGE_ORDER = ['protein', 'calories', 'salt', 'veg', 'fat', 'fiber', 'carbs'];
 
 function savedFilterOptions(axis){
   if(axis === 'genre') return GENRES.concat([UNCLASSIFIED]);
@@ -88,13 +87,10 @@ function renderRangeRowHtml(m){
     field('min', '最小') + '<span class="range-sep" aria-hidden="true">〜</span>' + field('max', '最大') + '</div>';
 }
 
-// 栄養の範囲(7指標の最小・最大)。よく使う3つを出し、残りは折りたたみ
+// 栄養の範囲(7指標の最小・最大)。見出しも折りたたみもなく、1つのリストに並べる(空欄は指定なし)
 function renderRangePanelHtml(){
-  const rows = (ids) => ids.map(savedMetricById).filter(Boolean).map(renderRangeRowHtml).join('');
-  const moreNames = FILTER_RANGE_MORE.map(savedMetricById).filter(Boolean).map(m => m.label).join('・');
-  return '<section class="filter-group"><h3>栄養(空欄は指定なし)</h3>' +
-    rows(FILTER_RANGE_MAIN) +
-    '<details class="filter-more" id="saved-filter-more"><summary>ほかの栄養(' + escapeSavedHtml(moreNames) + ')</summary>' + rows(FILTER_RANGE_MORE) + '</details>' +
+  return '<section class="filter-group filter-ranges" aria-label="栄養で絞り込み(空欄は指定なし)">' +
+    FILTER_RANGE_ORDER.map(savedMetricById).filter(Boolean).map(renderRangeRowHtml).join('') +
     '</section>';
 }
 
@@ -169,9 +165,6 @@ function syncRangeInputs(){
     const want = r && typeof r[parts[1]] === 'number' ? r[parts[1]] : null;
     if(parseRangeValue(input.value) !== want) input.value = want === null ? '' : String(want);
   });
-  // 折りたたみの中の指標に条件があるときは、開いて見えるようにする
-  const more = document.getElementById('saved-filter-more');
-  if(more && FILTER_RANGE_MORE.some(id => { const r = savedFilters.ranges[id]; return r && (typeof r.min === 'number' || typeof r.max === 'number'); })) more.open = true;
 }
 
 // 絞り込みの表示(役割の切り替え・適用中の条件・ボタンの印・シートの中身)を最新にする。

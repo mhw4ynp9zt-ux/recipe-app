@@ -183,22 +183,43 @@
     return v === null ? 'ー' : v + m.unit;
   }
 
-  // タイルのたんぱく質バーが満タンになる量(g)。タイル同士を見比べるための目安で、目標値ではない
-  const SAVED_PROTEIN_BAR_MAX = 80;
+  // タイルのPFCバー。たんぱく質(P)・脂質(F)・糖質(C)を「カロリーへの寄与(P×4・F×9・C×4)」の比率で1本に並べる。
+  // 値が無い指標は0として扱い、3つとも無いときはバーを空にする(文字は「ー」)
+  function savedPfcShares(p, f, c){
+    const kp = (p || 0) * 4, kf = (f || 0) * 9, kc = (c || 0) * 4;
+    const total = kp + kf + kc;
+    if(total <= 0) return { p: 0, f: 0, c: 0 };
+    return { p: kp / total * 100, f: kf / total * 100, c: kc / total * 100 };
+  }
+  // タイルに出す数値の文字。digits=小数の桁数(幅に収めるため P/F/C・野菜は0、塩分・食物繊維は1)。値が無いときは「ー」。
+  // 詳細シートには従来どおり小数のまま出る
+  function savedTileNum(v, unit, digits){
+    if(v === null) return 'ー';
+    const k = Math.pow(10, digits || 0);
+    return String(Math.round(v * k) / k) + unit;
+  }
 
-  // 一覧のタイル1枚。「種類・料理名・カロリー・たんぱく質のバー」だけを出し、
+  // 一覧のタイル1枚。「種類・料理名・カロリー・PFCバー(P/F/C)・塩分/食物繊維/野菜のチップ」を出し、
   // 7指標すべて・材料・作り方・栄養の計算内訳は、タップで開くレシピの詳細シート(saved-sheet.js)に出す
   function savedTileHtml(d){
     const esc = escapeSavedHtml;
     const kcal = savedMetricValue(d, 'calories');
     const protein = savedMetricValue(d, 'protein');
-    const pct = protein === null ? 0 : Math.max(0, Math.min(100, Math.round(protein / SAVED_PROTEIN_BAR_MAX * 100)));
+    const fat = savedMetricValue(d, 'fat');
+    const carbs = savedMetricValue(d, 'carbs');
+    const salt = savedMetricValue(d, 'salt');
+    const fiber = savedMetricValue(d, 'fiber');
+    const veg = savedMetricValue(d, 'veg');
+    const sh = savedPfcShares(protein, fat, carbs);
+    const seg = (cls, pct) => '<span class="' + cls + '" style="width:' + pct.toFixed(1) + '%"></span>';
+    const chip = (cls, label, v, unit, digits) => '<span class="saved-tile-chip ' + cls + '">' + label + ' ' + savedTileNum(v, unit, digits) + '</span>';
     return '<button type="button" class="saved-tile" data-id="' + esc(d.id) + '" aria-haspopup="dialog">' +
       (d.type ? '<span class="saved-tile-kind">' + esc(d.type) + '</span>' : '') +
       '<span class="saved-tile-title">' + esc(d.name) + '</span>' +
       '<span class="saved-tile-kcal"><b>' + (kcal === null ? 'ー' : esc(kcal)) + '</b><small>kcal</small></span>' +
-      '<span class="saved-tile-protein"><span class="saved-tile-protein-row"><span>たんぱく質</span><b>' + (protein === null ? 'ー' : esc(protein) + 'g') + '</b></span>' +
-      '<span class="saved-tile-bar" aria-hidden="true"><span style="width:' + pct + '%"></span></span></span>' +
+      '<span class="saved-tile-pfc"><span class="saved-tile-bar" aria-hidden="true">' + seg('seg-p', sh.p) + seg('seg-f', sh.f) + seg('seg-c', sh.c) + '</span>' +
+      '<span class="saved-tile-pfc-row"><span>P <b>' + savedTileNum(protein, 'g') + '</b></span><span>F <b>' + savedTileNum(fat, 'g') + '</b></span><span>C <b>' + savedTileNum(carbs, 'g') + '</b></span></span></span>' +
+      '<span class="saved-tile-chips">' + chip('c-salt', '塩分', salt, 'g', 1) + chip('c-fiber', '繊維', fiber, 'g', 1) + chip('c-veg', '野菜', veg, 'g', 0) + '</span>' +
     '</button>';
   }
 
