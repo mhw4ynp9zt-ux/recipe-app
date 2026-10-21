@@ -4,7 +4,7 @@
 // 読み込み順: config.js → recipe-classify.js → save.js → saved-sheet.js → saved-filter.js → main.js(index.html には <script> だけを足す)。
 // 画面の構成(css/saved.css):
 //   ・一覧の上に常に出る: 役割の切り替え(すべて/主菜/副菜/汁物/主食)、「詳しく絞り込む」ボタン、並べ替え、適用中の条件(×で外せる)
-//   ・「詳しく絞り込む」を押すと下から出るシート: 系統・主材料のチップ、栄養の最小・最大(7指標すべてを最初から表示)
+//   ・「詳しく絞り込む」を押すと下から出るシート: 系統・主材料のチップ、栄養の最小・最大(8指標すべてを最初から表示)
 // 絞り込みの条件と並べ替えは、この画面を開いている間だけ覚えます(端末には保存しません)。
 
 // recipe-classify.js が読み込めなかった場合は null(その場合、絞り込みは無効で、保存済みタブは従来どおり検索だけで動く)
@@ -25,7 +25,7 @@ const SAVED_SHEET_AXES = [
   { axis: 'main', title: '主材料' },
 ];
 // 栄養の範囲。7指標すべてを、折りたたまずに最初から並べる(この順)
-const FILTER_RANGE_ORDER = ['protein', 'calories', 'salt', 'veg', 'fat', 'fiber', 'carbs'];
+const FILTER_RANGE_ORDER = ['protein', 'calories', 'salt', 'veg', 'fat', 'fiber', 'carbs', 'carbohydrate'];
 
 function savedFilterOptions(axis){
   if(axis === 'genre') return GENRES.concat([UNCLASSIFIED]);
@@ -87,7 +87,7 @@ function renderRangeRowHtml(m){
     field('min', '最小') + '<span class="range-sep" aria-hidden="true">〜</span>' + field('max', '最大') + '</div>';
 }
 
-// 栄養の範囲(7指標の最小・最大)。見出しも折りたたみもなく、1つのリストに並べる(空欄は指定なし)
+// 栄養の範囲(8指標の最小・最大)。見出しも折りたたみもなく、1つのリストに並べる(空欄は指定なし)
 function renderRangePanelHtml(){
   return '<section class="filter-group filter-ranges" aria-label="栄養で絞り込み(空欄は指定なし)">' +
     FILTER_RANGE_ORDER.map(savedMetricById).filter(Boolean).map(renderRangeRowHtml).join('') +

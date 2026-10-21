@@ -39,6 +39,7 @@ const METRICS = {
   salt:     { label: "塩分",       unit: "g",    max: 50 },
   fiber:    { label: "食物繊維",   unit: "g",    max: 200 },
   carbs:    { label: "糖質",       unit: "g",    max: 1000 },
+  carbohydrate: { label: "炭水化物", unit: "g",    max: 1000 },
   calories: { label: "カロリー",   unit: "kcal", max: 6000 },
 };
 

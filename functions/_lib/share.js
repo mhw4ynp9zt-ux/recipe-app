@@ -3,7 +3,7 @@ import { json } from "./session.js";
 
 export const TOKEN_RE = /^[a-f0-9]{32}$/;
 export const MAX_SHARES_PER_USER = 300;
-const METRICS = ["protein", "veg", "fat", "salt", "fiber", "carbs", "calories"];
+const METRICS = ["protein", "veg", "fat", "salt", "fiber", "carbs", "carbohydrate", "calories"];
 const SNAPSHOT_MAX_CHARS = 200000;
 
 export function newToken() {

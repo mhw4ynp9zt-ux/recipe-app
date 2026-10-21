@@ -108,6 +108,7 @@ body .saved-sort select:focus{box-shadow:none; background-color:transparent;}
 .saved-tile-chip.m-protein{background:var(--protein-bg);}
 .saved-tile-chip.m-fat{background:var(--fat-bg);}
 .saved-tile-chip.m-carbs{background:var(--carbs-bg);}
+.saved-tile-chip.m-carbohydrate{background:var(--carbohydrate-bg);}
 .saved-tile-chip.m-salt{background:var(--salt-bg);}
 .saved-tile-chip.m-fiber{background:var(--fiber-bg);}
 .saved-tile-chip.m-veg{background:var(--veg-bg);}
