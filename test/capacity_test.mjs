@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { startJob, getJobState, runJob, MAX_AI_CALLS, MAX_ATTEMPTS } from "../functions/_lib/recipe-job.js";
-import { parseCapacityMl, dishVolumeMl, findCapacityHits, capacityLimits } from "../functions/_lib/appliance-capacity.js";
+import { parseCapacityMl, dishVolumeMl, findCapacityHits, capacityLimits, scaledTargets } from "../functions/_lib/appliance-capacity.js";
 import { buildPrompt, buildRetryPrompt, parseDishes } from "../functions/_lib/recipe-prompt.js";
 import { createTrace } from "../functions/_lib/debug-trace.js";
 
@@ -100,11 +100,45 @@ const POT = { name: "レコルト 調理ポット", policy: "optional", note: ""
   ok("実際に出た容量オーバーのレシピ(約" + h[0].volumeMl + "ml)を、appliance が null でも検出する");
 }
 
+{ // 2回目のスクショ: 野菜440g+豆乳220ml+調味料。水80mlは手順にだけ書かれている → 水も数える
+  const d = { name: "かぼちゃのポタージュ", appliance: "レコルト 調理ポット",
+    steps: ["かぼちゃ…は一口大に切る", "レコルト 調理ポットにすべての野菜と水80ml(合計容量594ml以内)を入れ、POTAGE&PASTEモードで25分調理する。"],
+    ingredientDetails: [ing("かぼちゃ", "150g", 150), ing("にんじん", "120g(約3/4本)", 120), ing("ブロッコリー", "100g(約1/3株)", 100), ing("玉ねぎ", "1/2個(70g)", 70),
+      ing("無調整豆乳", "220ml", 227), ing("コンソメ", "小さじ1", 3), ing("オリーブ油", "小さじ1", 4), ing("塩", "小さじ1/3", 2)] };
+  const v = dishVolumeMl(d);
+  assert.ok(v > 740 && v < 760, "実際 " + v);
+  assert.equal(findCapacityHits([d], [POT]).length, 1);
+  // 材料欄に水があれば、手順の水は二重に数えない
+  const withWater = { ...d, ingredientDetails: [...d.ingredientDetails, ing("水", "80ml", 0)] };
+  assert.equal(dishVolumeMl(withWater), v);
+  // 材料を減らして収まれば対象外(水を数えても)
+  const ok2 = { ...d, ingredientDetails: [ing("かぼちゃ", "100g", 100), ing("玉ねぎ", "50g", 50), ing("無調整豆乳", "200ml", 206)] };
+  assert.deepEqual(findCapacityHits([ok2], [POT]), []);
+  ok("手順にだけ書かれた水・お湯・だしも、容量に数える(材料欄にあれば二重に数えない)。2回目のスクショのレシピは約" + Math.round(v) + "ml");
+}
+
+{ // 縮めた量の目安: 全部を目安の量にすると、容量(最大の92%)以下に収まる
+  const d = { name: "かぼちゃのポタージュ", appliance: "レコルト 調理ポット",
+    steps: ["レコルト 調理ポットにすべての野菜と水80mlを入れる"],
+    ingredientDetails: [ing("かぼちゃ", "150g", 150), ing("にんじん", "120g", 120), ing("ブロッコリー", "100g", 100), ing("玉ねぎ", "1/2個(70g)", 70),
+      ing("無調整豆乳", "220ml", 227), ing("コンソメ", "小さじ1", 3), ing("オリーブ油", "小さじ1", 4), ing("塩", "小さじ1/3", 2)] };
+  const t = scaledTargets(d, 600);
+  assert.ok(t.length >= 6);
+  assert.deepEqual(t.find((x) => x.name === "無調整豆乳").unit, "ml"); assert.deepEqual(t.find((x) => x.name === "かぼちゃ").unit, "g");
+  assert.ok(t.some((x) => /^水/.test(x.name) && x.unit === "ml"), "手順だけの水も含む");
+  assert.ok(!t.some((x) => x.name === "塩" || x.name === "コンソメ"), "小さじ程度の調味料は触らない");
+  const shrunk = { ...d, steps: [], ingredientDetails: [...t.filter((x) => !/^水/.test(x.name)).map((x) => ing(x.name, x.value + x.unit, x.value)), ing("コンソメ", "小さじ1", 3), ing("塩", "小さじ1/3", 2)] };
+  assert.ok(dishVolumeMl(shrunk) <= 600, "実際 " + dishVolumeMl(shrunk));
+  assert.deepEqual(scaledTargets(shrunk, 600), []);
+  assert.deepEqual(scaledTargets({ ...d, ingredientDetails: [ing("かぼちゃ", "100g", 100)], steps: [] }, 600), []);
+  ok("縮めた量の目安: 各材料の量をコードで計算(その量にすると約" + Math.round(dishVolumeMl(shrunk)) + "ml=最大600ml以内)。収まる品には出さない");
+}
+
 // ==== B. プロンプトと返答の解析(AIは呼ばない) ====
 const baseReq = { ingredients: "", mood: "", count: 1, metrics: [{ id: "protein", label: "たんぱく質", unit: "g", target: 78 }] };
 {
   const p = buildPrompt({ ...baseReq, appliances: [POT] });
-  assert.match(p, /最大600mlまで/); assert.match(p, /栄養の目標よりも優先して守る/); assert.match(p, /"appliance"/); assert.match(p, /"applianceMl"/);
+  assert.match(p, /最大600mlまで/); assert.match(p, /液体は、必ず材料にも書く/); assert.match(p, /栄養の目標よりも優先して守る/); assert.match(p, /"appliance"/); assert.match(p, /"applianceMl"/);
   const p0 = buildPrompt({ ...baseReq, appliances: [] });
   assert.doesNotMatch(p0, /"appliance"/); assert.doesNotMatch(p0, /最大\d+mlまで/);
   const pNoCap = buildPrompt({ ...baseReq, appliances: [{ ...POT, spec: { ...POT.spec, capacity: "" } }] });
@@ -127,7 +161,7 @@ const baseReq = { ingredients: "", mood: "", count: 1, metrics: [{ id: "protein"
   const r = buildRetryPrompt({ ...baseReq, appliances: [POT] }, [bigSoup], check, [], hits);
   assert.match(r, /家電の容量を超えていました/); assert.match(r, /最大600ml/); assert.match(r, /きのこたっぷり彩りポタージュ/);
   assert.match(r, /栄養の目標よりも優先します/); assert.match(r, /他の品の材料の grams を増減/);
-  assert.match(r, /あと約6\d\dml減らす/); assert.match(r, /量の多い材料: .*ブロッコリー 250ml相当/);
+  assert.match(r, /縮めた量の目安/); assert.match(r, /ブロッコリー \d+g/); assert.match(r, /あと約6\d\dml減らす/); assert.match(r, /量の多い材料: .*ブロッコリー 250ml相当/);
   const r0 = buildRetryPrompt({ ...baseReq, appliances: [POT] }, [bigSoup], check, [], []);
   assert.doesNotMatch(r0, /家電の容量を超えていました/);
   ok("作り直しの依頼文: 容量超過の品名・量・最大が入る(超過なしなら入らない)");

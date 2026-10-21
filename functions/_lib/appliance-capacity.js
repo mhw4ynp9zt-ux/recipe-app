@@ -35,31 +35,65 @@ export function parseCapacityMl(text) {
   return max;
 }
 
-// 1つの材料の量(ml相当)。amount の ml/cc/L/カップ を優先し、なければ grams
-function ingredientMl(ing) {
+// 1つの材料の量。amount の ml/cc/L/カップ を優先し(unit: "ml")、なければ grams(unit: "g")。{ value(ml相当), unit }
+function ingredientMeasure(ing) {
   const amount = norm(ing && ing.amount);
   let ml = null;
   for (const m of amount.matchAll(ML_RE)) {
     const v = toMl(Number(m[1]), m[2]);
     if (Number.isFinite(v)) ml = (ml || 0) + v;
   }
-  if (ml !== null) return ml;
+  if (ml !== null) return { value: ml, unit: "ml" };
   const cup = amount.match(CUP_RE);
-  if (cup) return Number(cup[1] || cup[2]) * CUP_ML;
+  if (cup) return { value: Number(cup[1] || cup[2]) * CUP_ML, unit: "ml" };
   const g = Number(ing && ing.grams);
-  return Number.isFinite(g) && g > 0 ? g : 0;
+  return { value: Number.isFinite(g) && g > 0 ? g : 0, unit: "g" };
 }
+const ingredientMl = (ing) => ingredientMeasure(ing).value;
 
 // 1品の材料ごとの量(ml相当)。量の大きい順。作り直しの依頼文で、どれを減らすかを示すために使う
 export function ingredientVolumes(dish) {
   const list = dish && Array.isArray(dish.ingredientDetails) ? dish.ingredientDetails : [];
-  return list.map((i) => ({ name: String((i && i.name) || ""), ml: Math.round(ingredientMl(i)) })).filter((x) => x.ml > 0).sort((a, b) => b.ml - a.ml);
+  return list.map((i) => ({ name: String((i && i.name) || ""), ml: Math.round(ingredientMeasure(i).value) })).filter((x) => x.ml > 0).sort((a, b) => b.ml - a.ml);
 }
 
-// 1品の材料の合計(ml相当)
+// 容量に収まるように全体を縮めたときの、各材料の量の目安(コードで計算。AIは暗算が苦手なので、この数値をそのまま渡す)
+//   縮める割合 = 最大 × 0.92 ÷ 現在の合計(余裕を8%見る)。量は5単位に丸める(下方向。0になる調味料などは対象外)
+//   返り値: [{ name, value, unit }](unit は "g" か "ml")。手順にだけある液体は「水(材料に書き足す)」として含める
+export function scaledTargets(dish, maxMl) {
+  const total = dishVolumeMl(dish);
+  if (!(total > maxMl)) return [];
+  const f = (maxMl * 0.92) / total;
+  const list = dish && Array.isArray(dish.ingredientDetails) ? dish.ingredientDetails : [];
+  const out = [];
+  for (const i of list) {
+    const m = ingredientMeasure(i);
+    if (m.value < 10) continue; // 小さじ程度の調味料は触らない
+    out.push({ name: String((i && i.name) || ""), value: Math.max(5, Math.floor((m.value * f) / 5) * 5), unit: m.unit });
+  }
+  for (const l of stepOnlyLiquids(dish)) out.push({ name: l.name + "(材料にも書き足す)", value: Math.max(5, Math.floor((l.ml * f) / 5) * 5), unit: "ml" });
+  return out;
+}
+
+// 手順にだけ書かれていて、材料欄に無い液体(水・お湯・だし)の一覧。例: 手順「水80mlを入れ」→ [{ name: "水", ml: 80 }]
+//   材料欄に同じ液体(名前に「水」「湯」「だし」を含む材料)があれば、二重に数えないよう含めない
+function stepOnlyLiquids(dish) {
+  const list = dish && Array.isArray(dish.ingredientDetails) ? dish.ingredientDetails : [];
+  const steps = norm(((dish && dish.steps) || []).join(" "));
+  const out = [];
+  for (const w of ["水", "お湯", "だし", "出汁"]) {
+    if (list.some((i) => norm(i && i.name).includes(w) || (w === "お湯" && norm(i && i.name).includes("湯")))) continue;
+    const m = steps.match(new RegExp(w + "\\s*[(（]?\\s*" + NUM + "\\s*(ml|cc|㏄|l|リットル)", "i"));
+    if (m) out.push({ name: w, ml: toMl(Number(m[1]), m[2]) });
+  }
+  return out;
+}
+const stepOnlyLiquidMl = (dish) => stepOnlyLiquids(dish).reduce((s, x) => s + x.ml, 0);
+
+// 1品の材料の合計(ml相当)。材料欄に無く、手順にだけ書かれた水・お湯・だしも加える
 export function dishVolumeMl(dish) {
   const list = dish && Array.isArray(dish.ingredientDetails) ? dish.ingredientDetails : [];
-  return list.reduce((s, ing) => s + ingredientMl(ing), 0);
+  return list.reduce((s, ing) => s + ingredientMl(ing), 0) + stepOnlyLiquidMl(dish);
 }
 
 const squash = (s) => norm(s).toLowerCase().replace(/[\s・･\-ー_()()「」]/g, "");
@@ -89,7 +123,7 @@ export function findCapacityHits(dishes, appliances) {
     dishes.forEach((dish, i) => {
       if (!usesAppliance(dish, a)) return;
       const volumeMl = Math.round(dishVolumeMl(dish));
-      if (volumeMl > maxMl) out.push({ dishIndex: i, dish: String((dish && dish.name) || ""), appliance: a.name, volumeMl, maxMl, items: ingredientVolumes(dish).slice(0, 6) });
+      if (volumeMl > maxMl) out.push({ dishIndex: i, dish: String((dish && dish.name) || ""), appliance: a.name, volumeMl, maxMl, items: ingredientVolumes(dish).slice(0, 6), scaled: scaledTargets(dish, maxMl) });
     });
   }
   return out;
