@@ -209,45 +209,29 @@
     return v === null ? 'ー' : v + m.unit;
   }
 
-  // タイルのミニバー。タイル同士を見比べるための「満タンの目安(1食ぶん)」で、栄養の目標値ではない。超えたときは満タンで止める
-  const SAVED_TILE_BARS = [
-    { id: 'protein', label: 'たんぱく質', unit: 'g', digits: 0, max: 80 },
-    { id: 'fat',     label: '脂質',       unit: 'g', digits: 0, max: 40 },
-    { id: 'carbs',   label: '糖質',       unit: 'g', digits: 0, max: 120 },
-    { id: 'salt',    label: '塩分',       unit: 'g', digits: 1, max: 4 },
-    { id: 'fiber',   label: '食物繊維',   unit: 'g', digits: 1, max: 10 },
-    { id: 'veg',     label: '野菜',       unit: 'g', digits: 0, max: 200 },
-  ];
-  // タイルに出す数値の文字。値が無いときは「ー」。詳細シートには従来どおり小数のまま出る
+  // タイルに出す数値の文字。digits=小数の桁数(幅に収めるため、たんぱく質・脂質・糖質・野菜は0、塩分・食物繊維は1)。
+  // 値が無いときは「ー」。詳細シートには従来どおり小数のまま出る
   function savedTileNum(v, unit, digits){
     if(v === null) return 'ー';
     const k = Math.pow(10, digits || 0);
     return String(Math.round(v * k) / k) + unit;
   }
-  // バーの長さ(0〜100)。値が無いときは0
-  function savedBarPct(v, max){
-    if(v === null || !(max > 0)) return 0;
-    return Math.max(0, Math.min(100, Math.round(v / max * 100)));
-  }
 
-  // 一覧のタイル1枚。「種類・料理名・カロリー・6項目(たんぱく質・脂質・糖質・塩分・食物繊維・野菜)のミニバー」を出し、
+  // 一覧のタイル1枚。「種類・料理名・カロリー・数字の2×2(たんぱく質・脂質・糖質・塩分)・食物繊維と野菜のチップ」を出し、
   // 材料・作り方・栄養の計算内訳は、タップで開くレシピの詳細シート(saved-sheet.js)に出す
   function savedTileHtml(d){
     const esc = escapeSavedHtml;
     const kcal = savedMetricValue(d, 'calories');
-    const row = (m) => {
-      const v = savedMetricValue(d, m.id);
-      return '<span class="saved-tile-row m-' + m.id + '"><span class="saved-tile-row-label">' + m.label + '</span>' +
-        '<span class="saved-tile-bar" aria-hidden="true"><span style="width:' + savedBarPct(v, m.max) + '%"></span></span>' +
-        '<b class="saved-tile-row-val">' + savedTileNum(v, m.unit, m.digits) + '</b></span>';
-    };
+    const cell = (id, label, digits) => '<span class="saved-tile-cell m-' + id + '"><b>' + savedTileNum(savedMetricValue(d, id), 'g', digits) + '</b><span>' + label + '</span></span>';
+    const chip = (id, label) => '<span class="saved-tile-chip m-' + id + '">' + label + ' ' + savedTileNum(savedMetricValue(d, id), 'g', id === 'fiber' ? 1 : 0) + '</span>';
     const photoSrc = typeof recipePhotoSrc === 'function' ? recipePhotoSrc(d) : '';
     return '<button type="button" class="saved-tile" data-id="' + esc(d.id) + '" aria-haspopup="dialog">' +
       (photoSrc ? '<span class="saved-tile-photo"><img src="' + esc(photoSrc) + '" alt="" loading="lazy" decoding="async"></span>' : '') +
       (d.type ? '<span class="saved-tile-kind">' + esc(d.type) + '</span>' : '') +
       '<span class="saved-tile-title">' + esc(d.name) + '</span>' +
       '<span class="saved-tile-kcal"><b>' + (kcal === null ? 'ー' : esc(kcal)) + '</b><small>kcal</small></span>' +
-      '<span class="saved-tile-rows">' + SAVED_TILE_BARS.map(row).join('') + '</span>' +
+      '<span class="saved-tile-grid">' + cell('protein', 'たんぱく質', 0) + cell('fat', '脂質', 0) + cell('carbs', '糖質', 0) + cell('salt', '塩分', 1) + '</span>' +
+      '<span class="saved-tile-chips">' + chip('fiber', '食物繊維') + chip('veg', '野菜') + '</span>' +
     '</button>';
   }
 
