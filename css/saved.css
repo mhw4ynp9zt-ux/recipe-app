@@ -103,19 +103,17 @@ body .saved-sort select:focus{box-shadow:none; background-color:transparent;}
 .saved-tile-kcal{display:flex; align-items:baseline; gap:4px;}
 .saved-tile-kcal b{font-size:24px; font-weight:900; line-height:1; font-variant-numeric:tabular-nums;}
 .saved-tile-kcal small{font-size:11px; color:var(--ink-soft);}
-.saved-tile-pfc{display:block;}
-.saved-tile-bar{display:flex; height:9px; overflow:hidden; border:1.5px solid var(--ink); border-radius:5px; background:var(--bg-deep);}
+.saved-tile-rows{display:flex; flex-direction:column; gap:4px;}
+.saved-tile-row{display:grid; grid-template-columns:3.6em minmax(0,1fr) 2.9em; align-items:center; gap:5px; font-size:10.5px; line-height:1.2; color:var(--ink-soft); white-space:nowrap;}
+.saved-tile-row-val{text-align:right; color:var(--ink); font-weight:700; font-variant-numeric:tabular-nums;}
+.saved-tile-bar{display:block; height:7px; overflow:hidden; border:1.5px solid var(--ink); border-radius:4px; background:var(--bg-deep);}
 .saved-tile-bar > span{display:block; height:100%;}
-.saved-tile-bar .seg-p{background:var(--protein);}
-.saved-tile-bar .seg-f{background:#E0A84C;}
-.saved-tile-bar .seg-c{background:var(--veg);}
-.saved-tile-pfc-row{display:flex; justify-content:space-between; gap:4px; margin-top:3px; font-size:11px; color:var(--ink-soft); white-space:nowrap;}
-.saved-tile-pfc-row b{color:var(--ink); font-weight:700; font-variant-numeric:tabular-nums;}
-.saved-tile-chips{display:flex; flex-wrap:wrap; gap:3px;}
-.saved-tile-chip{padding:1px 6px; border-radius:8px; font-size:11px; line-height:1.5; color:var(--ink); white-space:nowrap; font-variant-numeric:tabular-nums;}
-.saved-tile-chip.c-salt{background:var(--salt-bg);}
-.saved-tile-chip.c-fiber{background:var(--fiber-bg);}
-.saved-tile-chip.c-veg{background:var(--veg-bg);}
+.saved-tile-row.m-protein .saved-tile-bar > span{background:var(--protein);}
+.saved-tile-row.m-fat .saved-tile-bar > span{background:#E0A84C;}
+.saved-tile-row.m-carbs .saved-tile-bar > span{background:var(--carbs);}
+.saved-tile-row.m-salt .saved-tile-bar > span{background:var(--salt);}
+.saved-tile-row.m-fiber .saved-tile-bar > span{background:var(--fiber);}
+.saved-tile-row.m-veg .saved-tile-bar > span{background:var(--veg);}
 
 /* ---------- 下から出るシート(詳細・絞り込み) ---------- */
 body.saved-sheet-open{overflow:hidden;}
