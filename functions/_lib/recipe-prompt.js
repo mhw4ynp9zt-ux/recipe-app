@@ -487,6 +487,32 @@ function buildPrompt(req) {
     ']';
 }
 
+// 容量超過の品を、こちらが示した量に縮めたとき、全品の合計がどう変わるかの見込み(AIは呼ばない。attachNutrition 済みの contrib から計算)。
+// 縮める品の材料(hit.scaled にある名前のもの)の寄与を、hit.factor の割合に減らす。目標から外れる指標だけを返す。
+// 縮めたことで変わる指標だけを対象にする(もともとの過不足は、作り直しの本文の【前回の計算結果】が伝える)。
+// 返り値: [{ label, unit, now, projected, target, gap }](gap = 目標 - 見込み。正なら不足)
+function projectAfterScaling(dishes, check, capHits) {
+  if (!capHits.length || !check || !Array.isArray(check.results)) return [];
+  const lost = {};
+  for (const h of capHits) {
+    const dish = dishes && dishes[h.dishIndex];
+    const names = new Set((h.scaled || []).map((x) => x.name));
+    const f = Number(h.factor);
+    if (!dish || !Array.isArray(dish.ingredientDetails) || !(f > 0 && f < 1)) continue;
+    for (const ing of dish.ingredientDetails) {
+      if (!ing || !ing.contrib || !names.has(ing.name)) continue;
+      for (const [id, v] of Object.entries(ing.contrib)) lost[id] = (lost[id] || 0) + (Number(v) || 0) * (1 - f);
+    }
+  }
+  const out = [];
+  for (const r of check.results) {
+    const projected = Math.round((r.total - (lost[r.id] || 0)) * 10) / 10;
+    const gap = Math.round((r.target - projected) * 10) / 10;
+    if (lost[r.id] > 0 && Math.abs(gap) > r.target * AIM_TOLERANCE) out.push({ label: r.label, unit: r.unit, now: r.total, projected, target: r.target, gap });
+  }
+  return out;
+}
+
 // 目標の許容範囲(±TOLERANCE)から外れたとき、または使わない食材が含まれていたときに、AIへ送る「作り直し」の依頼文。
 // 会話の続き(1回目のプロンプト → AIの返答 → この依頼文)として送るので、条件の全文は繰り返さない。
 // 前回の合計と目標との差(例: 前回563kcalで-6.2%不足)を、増やす/減らすの向きと量つきで伝える。
@@ -504,13 +530,18 @@ function buildRetryPrompt(req, dishes, check, hits = [], capHits = []) {
     ? '【使ってはいけない食材が含まれていました】\n' + hits.map((n) => '・' + n).join('\n') + '\n' +
       'これらはユーザーが「使わない」と登録した食材です。前回のレシピの料理名・材料(関連する部位・加工品も)から、すべて取り除いてください。\n\n'
     : '';
+  const projection = projectAfterScaling(dishes, check, capHits);
   const capText = capHits.length
     ? '【家電の容量を超えていました】\n' +
       capHits.map((h) => '・「' + h.dish + '」: 「' + h.appliance + '」に入れる材料が約' + h.volumeMl + 'ml(最大' + h.maxMl + 'ml。あと約' + (h.volumeMl - h.maxMl) + 'ml減らす)' +
         (Array.isArray(h.items) && h.items.length ? '\n  量の多い材料: ' + h.items.map((x) => x.name + ' ' + x.ml + 'ml相当').join('、') : '') +
         (Array.isArray(h.scaled) && h.scaled.length ? '\n  【縮めた量の目安】(こちらで計算した値。この量以下で書くこと。ここにない調味料は今のまま): ' + h.scaled.map((x) => x.name + ' ' + x.value + x.unit).join('、') : '')).join('\n') + '\n' +
       'これらは容量の最大を超えていて、その家電では作れません。材料の合計(水・牛乳・豆乳などの液体を含む。1g=1ml)を最大以下に減らすか、その家電を使わない作り方(別の器具)に変えて、作り直してください。\n' +
-      '【重要】容量の最大は、栄養の目標よりも優先します。上の品の材料は、栄養の目標のために増やさないでください(目標より野菜やたんぱく質が減ってもかまいません)。栄養の過不足は、その家電を使わない他の品の材料の grams を増減して調整してください。\n\n'
+      '【重要】容量の最大は、栄養の目標よりも優先します。上の品の材料は、栄養の目標のために増やさないでください。栄養の過不足は、その家電を使わない他の品の材料の grams を増減して調整してください。\n' +
+      (projection.length
+        ? '【縮めたあとの栄養の見込み】(上の「縮めた量の目安」にしたとき、全品の合計がこうなります。こちらで計算した値)\n' +
+          projection.map((p) => '・' + p.label + ': 今' + fmtNum(p.now) + p.unit + ' → 縮めると約' + fmtNum(p.projected) + p.unit + '(目標' + fmtNum(p.target) + p.unit + 'に対し、約' + fmtNum(Math.abs(p.gap)) + p.unit + (p.gap > 0 ? '不足' : '多すぎ') + ')→ その家電を使わない他の品の材料で、約' + fmtNum(Math.abs(p.gap)) + p.unit + '分「' + (p.gap > 0 ? '増やす' : '減らす') + '」方向に調整').join('\n') + '\n'
+        : '') + '\n'
     : '';
   const capKeep = capHits.length
     ? '・家電の容量の最大は、作り直しでも必ず守る(材料の合計を最大以下にする)。栄養の目標より優先し、容量のある家電の品は増やさず、栄養は他の品で調整する。\n'

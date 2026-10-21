@@ -167,6 +167,26 @@ const baseReq = { ingredients: "", mood: "", count: 1, metrics: [{ id: "protein"
   ok("作り直しの依頼文: 容量超過の品名・量・最大が入る(超過なしなら入らない)");
 }
 
+{ // 縮めたあとの栄養の見込み: ログのケース(野菜が620g→縮めると減って目標600gに届かない)
+  const d = { name: "ポタージュ", appliance: "レコルト 調理ポット", steps: ["レコルト 調理ポットで煮る"],
+    ingredientDetails: [{ ...ing("かぼちゃ", "300g", 300), contrib: { veg: 300, protein: 3 } }, { ...ing("にんじん", "250g", 250), contrib: { veg: 250, protein: 2 } },
+      { ...ing("無調整豆乳", "300ml", 310), contrib: { veg: 0, protein: 10 } }, { ...ing("塩", "小さじ1", 6), contrib: { veg: 0, protein: 0 } }] };
+  const chicken = { name: "鶏むね肉の蒸し物", ingredientDetails: [{ ...ing("鶏むね肉", "250g", 250), contrib: { veg: 0, protein: 58 } }, { ...ing("ねぎ", "80g", 80), contrib: { veg: 70, protein: 1 } }] };
+  const hits = findCapacityHits([chicken, d], [POT]);
+  assert.equal(hits.length, 1); assert.equal(hits[0].dishIndex, 1); assert.ok(hits[0].factor > 0 && hits[0].factor < 1);
+  const check = { ok: false, worst: 0, results: [
+    { id: "veg", label: "野菜", unit: "g", target: 600, total: 620, diffPct: 3.3, ok: true },
+    { id: "protein", label: "たんぱく質", unit: "g", target: 78, total: 74, diffPct: -5, ok: true }] };
+  const r = buildRetryPrompt({ ...baseReq, appliances: [POT] }, [chicken, d], check, [], hits);
+  assert.match(r, /縮めたあとの栄養の見込み/); assert.match(r, /野菜: 今620g → 縮めると約4\d\d(\.\d)?g\(目標600gに対し、約1\d\d(\.\d)?g不足\)/);
+  assert.match(r, /その家電を使わない他の品の材料で、約1\d\d(\.\d)?g分「増やす」方向に調整/);
+  assert.match(r, /たんぱく質: 今74g → 縮めると約6\d(\.\d)?g/);
+  // 縮める材料の栄養への寄与が小さい(contrib が無い・0)なら、見込みの節は出ない
+  const noContrib = { ...d, ingredientDetails: d.ingredientDetails.map(({ contrib, ...x }) => x) };
+  assert.doesNotMatch(buildRetryPrompt({ ...baseReq, appliances: [POT] }, [chicken, noContrib], check, [], findCapacityHits([chicken, noContrib], [POT])), /縮めたあとの栄養の見込み/);
+  ok("縮めたあとの栄養の見込み: 野菜が目標に届かなくなる分を計算し、他の品で増やすよう具体的な量で伝える(寄与のデータが無ければ出さない)");
+}
+
 // ==== C. ジョブ全体(偽のAI・メモリDB)。AI呼び出し回数を数える ====
 function makeEnv() {
   const db = new DatabaseSync(":memory:");

@@ -123,7 +123,7 @@ export function findCapacityHits(dishes, appliances) {
     dishes.forEach((dish, i) => {
       if (!usesAppliance(dish, a)) return;
       const volumeMl = Math.round(dishVolumeMl(dish));
-      if (volumeMl > maxMl) out.push({ dishIndex: i, dish: String((dish && dish.name) || ""), appliance: a.name, volumeMl, maxMl, items: ingredientVolumes(dish).slice(0, 6), scaled: scaledTargets(dish, maxMl) });
+      if (volumeMl > maxMl) out.push({ dishIndex: i, dish: String((dish && dish.name) || ""), appliance: a.name, volumeMl, maxMl, items: ingredientVolumes(dish).slice(0, 6), scaled: scaledTargets(dish, maxMl), factor: Math.round(((maxMl * 0.92) / volumeMl) * 1000) / 1000 });
     });
   }
   return out;
