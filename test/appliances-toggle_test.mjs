@@ -47,6 +47,18 @@ const BASE = { count: 1, targets: { protein: 78 } };
   ok("useAppliances: 未指定/true/null は従来どおり、false だけ「使わない」。boolean 以外は400");
 }
 
+{
+  assert.equal(parseCreateRequest({ ...BASE }).value.excludeAppliances, undefined);
+  assert.equal(parseCreateRequest({ ...BASE, excludeAppliances: [] }).value.excludeAppliances, undefined);
+  assert.equal(parseCreateRequest({ ...BASE, excludeAppliances: null }).value.excludeAppliances, undefined);
+  assert.equal(parseCreateRequest({ ...BASE, excludeAppliances: ["  ", ""] }).value.excludeAppliances, undefined);
+  assert.deepEqual(parseCreateRequest({ ...BASE, excludeAppliances: [" レコルト 調理ポット ", "ホットクック"] }).value.excludeAppliances, ["レコルト 調理ポット", "ホットクック"]);
+  for (const bad of ["レコルト", {}, 1, [1], [null], [{}], Array(21).fill("a"), ["x".repeat(101)]]) {
+    assert.ok(parseCreateRequest({ ...BASE, excludeAppliances: bad }).error, "不正: " + JSON.stringify(bad).slice(0, 40));
+  }
+  ok("excludeAppliances: 未指定/空/null は従来どおり。名前の配列(最大20件・各100文字)だけ有効。それ以外は400");
+}
+
 // ==== B. プロンプト(本物の buildPrompt) ====
 {
   const base = parseCreateRequest(BASE).value;
@@ -126,6 +138,36 @@ const promptOf = (call) => call.messages.map((m) => m.content).join("\n");
   assert.equal(off.st.status, "done"); assert.equal(aiCalls.length, 1); assert.equal(off.st.result.capacityHits, undefined);
   assert.ok(on.st.status === "done");
   ok("使わない: 容量チェックも働かず、作り直しが増えない(AI呼び出し1回)");
+}
+{ // 家電ごとに選ぶ: 2台登録 → 1台だけ外す。外した家電はAIへの依頼にも容量チェックにも入らず、もう1台は残る
+  const HOT = { name: "ホットクック", policy: "optional", note: "", spec: { capacity: "1.6L", modes: [], ranges: "", cautions: [] } };
+  const both = await runOnce({ ...BASE }, [POT, HOT], [reply(soup)]);
+  assert.match(promptOf(aiCalls[0]), /レコルト 調理ポット/); assert.match(promptOf(aiCalls[0]), /ホットクック/);
+  assert.equal(aiCalls.length, 1); assert.equal(both.deps.state.loadAppliancesCalls, 1);
+
+  const one = await runOnce({ ...BASE, excludeAppliances: ["レコルト 調理ポット"] }, [POT, HOT], [reply(soup)]);
+  const p1 = promptOf(aiCalls[0]);
+  assert.doesNotMatch(p1, /レコルト 調理ポット/); assert.match(p1, /ホットクック/); assert.match(p1, /使える調理家電/);
+  assert.equal(aiCalls.length, 1); assert.equal(one.st.status, "done");
+  assert.deepEqual(JSON.parse(one.row.request).appliances.map((a) => a.name), ["ホットクック"]);
+
+  // 名前は全角半角・大文字小文字・空白を無視して合わせる
+  await runOnce({ ...BASE, excludeAppliances: ["ﾎｯﾄｸｯｸ"] }, [POT, HOT], [reply(soup)]);
+  assert.doesNotMatch(promptOf(aiCalls[0]), /ホットクック/); assert.match(promptOf(aiCalls[0]), /レコルト 調理ポット/);
+
+  // 両方外す → 家電の節は無い。持っていない名前を送っても何も起きない
+  await runOnce({ ...BASE, excludeAppliances: ["レコルト 調理ポット", "ホットクック"] }, [POT, HOT], [reply(soup)]);
+  assert.doesNotMatch(promptOf(aiCalls[0]), /使える調理家電/);
+  await runOnce({ ...BASE, excludeAppliances: ["存在しない家電"] }, [POT, HOT], [reply(soup)]);
+  assert.match(promptOf(aiCalls[0]), /レコルト 調理ポット/); assert.match(promptOf(aiCalls[0]), /ホットクック/);
+
+  // 容量超過のポットを外すと、容量チェックが働かず作り直しにならない(AIは1回)
+  const big = { ...soup, ingredientDetails: [ing("かぼちゃ", "400g", 400), ing("無調整豆乳", "700ml", 720)] };
+  await runOnce({ ...BASE }, [POT, HOT], [reply(big)]);
+  assert.ok(aiCalls.length > 1, "外さなければ容量超過で作り直し(比較用)");
+  const off = await runOnce({ ...BASE, excludeAppliances: ["レコルト 調理ポット"] }, [POT, HOT], [reply(big)]);
+  assert.equal(aiCalls.length, 1); assert.equal(off.st.result.capacityHits, undefined);
+  ok("家電ごと: 外した家電だけがAIへの依頼・容量チェックから消える(名前は全角半角などを無視して一致)。AI呼び出しは増えない");
 }
 { // どの場合も、1ジョブのAI呼び出しは絶対の上限以内。ジョブ開始と状況取得ではAIを呼ばない
   const env = makeEnv(), deps = makeDeps([POT]); setScript([reply(soup)]);

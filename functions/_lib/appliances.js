@@ -46,6 +46,9 @@ function dedupeKey(text) {
   return String(text).normalize("NFKC").toLowerCase().replace(/\s+/g, "");
 }
 
+// 家電の名前を比べるための印(画面の「この家電は使わない」の指定と、保存済みの家電を突き合わせる)
+export const applianceKey = dedupeKey;
+
 // spec の検証・整形。成功: { value: Spec | null }(空は null) / 失敗: { error }
 //   Spec = { capacity, modes: [{ name, desc }], ranges, cautions: [文字列] }(4項目とも必ずある)
 // 既定(strict)は上限超過・型違いを error にする(画面からの入力用)。

@@ -209,8 +209,21 @@ function parseCreateRequest(body) {
     if (body.useAppliances === false) useAppliances = false;
   }
 
+  // 家電ごとの「使わない」指定(名前の配列)。受け取るのは名前だけで、家電の中身は受け取らない(サーバーが保存済みの本人の分を読み、名前が合うものを外す)。
+  // 配列(最大20件・各100文字まで)の文字列だけ有効。無い(未指定/null/空)なら全部使う
+  let excludeAppliances;
+  if (body.excludeAppliances !== undefined && body.excludeAppliances !== null) {
+    const arr = body.excludeAppliances;
+    if (!Array.isArray(arr) || arr.length > 20 || arr.some((x) => typeof x !== "string" || x.length > 100)) {
+      return { error: "調理家電の使用の指定が不正です" };
+    }
+    const names = arr.map((x) => x.trim()).filter(Boolean);
+    if (names.length) excludeAppliances = names;
+  }
+
   const value = { ingredients, mood, count, metrics };
   if (useAppliances === false) value.useAppliances = false;
+  if (excludeAppliances) value.excludeAppliances = excludeAppliances;
   if (dishes) value.dishes = dishes;
   if (maxMinutes !== undefined) value.maxMinutes = maxMinutes;
   if (effortLevel !== undefined) value.effortLevel = effortLevel;

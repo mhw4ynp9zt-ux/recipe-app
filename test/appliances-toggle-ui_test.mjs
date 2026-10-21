@@ -54,41 +54,60 @@ async function openPage(browser, { loggedIn, appliances }) {
 const visible = (page) => page.evaluate(() => { const el = document.getElementById("appliance-use-panel"); return !!el && !el.hidden; });
 const create = async (page, seen) => { const n = seen.createBodies.length; await page.click("#btn-generate"); await page.waitForTimeout(500); assert.equal(seen.createBodies.length, n + 1, "作成要求が1回だけ送られる"); return seen.createBodies[n]; };
 
+const HOT = { name: "ホットクック", policy: "optional", note: "", spec: { capacity: "1.6L", modes: [], ranges: "", cautions: [] } };
+const btn = (name, use) => `.appliance-use-btn[data-name="${name}"][data-use="${use}"]`;
+const pressed = (page, name, use) => page.getAttribute(btn(name, use), "aria-pressed");
+
 const browser = await chromium.launch();
 try {
-  { // 登録あり・ログイン中: スイッチが出る。初期は「使う」で、何も付けずに送る
-    const { page, ctx, seen } = await openPage(browser, { loggedIn: true, appliances: [POT] });
+  { // 2台登録・ログイン中: 家電ごとに行が出る。初期はすべて「使う」で、何も付けずに送る
+    const { page, ctx, seen } = await openPage(browser, { loggedIn: true, appliances: [POT, HOT] });
     assert.equal(await visible(page), true, "スイッチが出る");
-    assert.equal(await page.getAttribute('.appliance-use-btn[data-use="1"]', "aria-pressed"), "true");
+    assert.equal(await page.locator(".appliance-use-row").count(), 2);
+    assert.equal(await pressed(page, POT.name, 1), "true"); assert.equal(await pressed(page, HOT.name, 1), "true");
     const body = await create(page, seen);
-    assert.equal("useAppliances" in body, false, "「使う」のときは従来どおり何も付けない");
-    ok("登録あり・ログイン中: スイッチが出る(初期は「使う」)。「使う」のとき従来どおりの要求");
+    assert.equal("excludeAppliances" in body, false, "すべて「使う」のときは従来どおり何も付けない");
+    assert.equal("useAppliances" in body, false);
+    ok("2台登録: 家電ごとの行が出て、初期はすべて「使う」。何も付けずに送る");
 
-    await page.click('.appliance-use-btn[data-use="0"]');
-    assert.equal(await page.getAttribute('.appliance-use-btn[data-use="0"]', "aria-pressed"), "true");
+    await page.click(btn(POT.name, 0));
+    assert.equal(await pressed(page, POT.name, 0), "true"); assert.equal(await pressed(page, HOT.name, 1), "true", "もう1台は「使う」のまま");
     const body2 = await create(page, seen);
-    assert.equal(body2.useAppliances, false);
-    assert.equal(JSON.stringify(body2).includes("レコルト"), false, "家電の中身は送らない");
-    ok("「使わない」を選ぶと useAppliances:false だけが送られる(家電の中身は送らない)");
+    assert.deepEqual(body2.excludeAppliances, [POT.name]);
+    assert.equal(JSON.stringify(body2).includes("ホットクック"), false); assert.equal("useAppliances" in body2, false);
+    ok("1台だけ「使わない」: その家電の名前だけが excludeAppliances で送られる(家電の中身は送らない)");
 
+    await page.click(btn(HOT.name, 0));
+    assert.deepEqual((await create(page, seen)).excludeAppliances.sort(), [HOT.name, POT.name].sort());
+    await page.click(btn(POT.name, 1)); await page.click(btn(HOT.name, 1));
+    assert.equal("excludeAppliances" in (await create(page, seen)), false);
+    ok("2台とも「使わない」→「使う」に戻すと、また何も付けない");
+
+    await page.click(btn(HOT.name, 0));
     await page.reload(); await page.waitForTimeout(600);
-    assert.equal(await page.getAttribute('.appliance-use-btn[data-use="0"]', "aria-pressed"), "true");
-    ok("選択はこの端末に記憶され、開き直しても「使わない」のまま");
+    assert.equal(await pressed(page, HOT.name, 0), "true"); assert.equal(await pressed(page, POT.name, 1), "true");
+    ok("選択は家電ごとにこの端末へ記憶され、開き直しても同じ");
     assert.deepEqual(unexpectedExternal(seen), [], "想定外の外部通信(AI含む)なし"); assert.deepEqual(seen.aiLike, [], "AIに到達する通信なし");
     await ctx.close();
+  }
+  { // 記憶していた名前の家電が、いまは登録に無い → 送らない(古い名前を送らない)
+    const { page, ctx, seen } = await openPage(browser, { loggedIn: true, appliances: [POT] });
+    await page.evaluate(() => localStorage.setItem("recipeRouletteExcludedAppliancesV1", JSON.stringify(["削除した家電"])));
+    await page.reload(); await page.waitForTimeout(600);
+    assert.equal("excludeAppliances" in (await create(page, seen)), false);
+    ok("登録に無い名前の「使わない」は送らない");
+    assert.deepEqual(unexpectedExternal(seen), []); await ctx.close();
   }
   { // 登録なし: スイッチは出ず、何も付けない
     const { page, ctx, seen } = await openPage(browser, { loggedIn: true, appliances: [] });
     assert.equal(await visible(page), false);
     const body = await create(page, seen);
-    assert.equal("useAppliances" in body, false);
+    assert.equal("excludeAppliances" in body, false);
     ok("家電が未登録: スイッチは出ず、何も付けない");
     assert.deepEqual(unexpectedExternal(seen), []); await ctx.close();
   }
-  { // ログアウト中: スイッチは出ない(以前「使わない」を選んでいても何も付けない)
+  { // ログアウト中: スイッチは出ない
     const { page, ctx, seen } = await openPage(browser, { loggedIn: false, appliances: [POT] });
-    await page.evaluate(() => localStorage.setItem("recipeRouletteUseAppliancesV1", "0"));
-    await page.reload(); await page.waitForTimeout(600);
     assert.equal(await visible(page), false);
     assert.equal(seen.createBodies.length, 0);
     ok("ログアウト中: スイッチは出ない");
