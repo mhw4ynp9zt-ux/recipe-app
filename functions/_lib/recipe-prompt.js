@@ -316,7 +316,8 @@ function capacityRule(appliances) {
     '・「' + l.name + '」は最大' + l.maxMl + 'mlまで。この家電に入れる材料の合計(水・牛乳・豆乳などの液体を含む。1g=1mlで数える)を' + l.maxMl + 'ml以下にする。' +
     '多くなるときは、材料を減らすか、この家電を使わない作り方(別の器具)にする\n'
   ).join('') +
-    '・各品の appliance には、その品の調理に使う家電の名前(【使える調理家電】に書かれた名前のとおり)を書く。使わない品は null にする\n';
+    '・各品の appliance には、その品の調理に使う家電の名前(【使える調理家電】に書かれた名前のとおり)を書く。使わない品は null にする\n' +
+    '・各品の applianceMl には、その家電に入れる材料(水・牛乳・豆乳などの液体を含む)を、1g=1mlとしてすべて足した合計の数値を書く。足してみて最大を超えるなら、材料を減らしてから出力する(野菜などの固形の材料は、重さがそのまま容量を使うので、特に多くしすぎない)。使わない品は null にする\n';
 }
 
 // 美味しさを最優先にするための指示(1回目のプロンプトに入る)。
@@ -398,7 +399,7 @@ function buildPrompt(req) {
   const appliancesRule = (appliances.length ? APPLIANCES_RULE : '') + (appliances.some((a) => a.spec) ? APPLIANCES_SPEC_RULE : '') + capacityRule(appliances);
   // 容量の確認用に、品ごとの使う家電の欄を出力させる(容量が読み取れる家電があるときだけ。無ければ従来の出力形式のまま)
   const applianceKey = capacityLimits(appliances).length
-    ? ',\n    "appliance": "この品の調理に使う家電の名前(使わないなら null)"'
+    ? ',\n    "appliance": "この品の調理に使う家電の名前(使わないなら null)",\n    "applianceMl": その家電に入れる材料の合計ml(数値。使わないなら null)'
     : '';
   // 所要時間の指定(あるときだけ)。AIには「全品を同時進行で」の上限として伝える
   const timeRule = MAX_MINUTES_OPTIONS.includes(req.maxMinutes)
@@ -503,7 +504,8 @@ function buildRetryPrompt(req, dishes, check, hits = [], capHits = []) {
     : '';
   const capText = capHits.length
     ? '【家電の容量を超えていました】\n' +
-      capHits.map((h) => '・「' + h.dish + '」: 「' + h.appliance + '」に入れる材料が約' + h.volumeMl + 'ml(最大' + h.maxMl + 'ml)').join('\n') + '\n' +
+      capHits.map((h) => '・「' + h.dish + '」: 「' + h.appliance + '」に入れる材料が約' + h.volumeMl + 'ml(最大' + h.maxMl + 'ml。あと約' + (h.volumeMl - h.maxMl) + 'ml減らす)' +
+        (Array.isArray(h.items) && h.items.length ? '\n  量の多い材料: ' + h.items.map((x) => x.name + ' ' + x.ml + 'ml相当').join('、') : '')).join('\n') + '\n' +
       'これらは容量の最大を超えていて、その家電では作れません。材料の合計(水・牛乳・豆乳などの液体を含む。1g=1ml)を最大以下に減らすか、その家電を使わない作り方(別の器具)に変えて、作り直してください。\n\n'
     : '';
   const capKeep = capHits.length
@@ -675,6 +677,7 @@ function parseDishes(content, req) {
     // 手間度(0=超ラク / 1=ラク / 2=ふつう / 3=しっかり)は、数値の0〜3のときだけ付ける(欠けた値・範囲外は項目ごと無し。エラーにはしない)
     if (typeof item.effortLevel === "number" && EFFORT_LEVELS.includes(item.effortLevel)) dish.effortLevel = item.effortLevel;
     // 使う家電の名前(容量の確認用)。欄があるときだけ付ける(文字列以外・空は null=家電を使わない品)。欄が無い返答では付けない
+    if (typeof item.applianceMl === "number" && Number.isFinite(item.applianceMl) && item.applianceMl >= 0 && item.applianceMl <= 20000) dish.applianceMl = Math.round(item.applianceMl);
     if (Object.prototype.hasOwnProperty.call(item, "appliance")) {
       dish.appliance = typeof item.appliance === "string" && item.appliance.trim() ? item.appliance.trim().slice(0, 60) : null;
     }

@@ -444,6 +444,12 @@
     return '<p class="nutrition-warn">「使わない食材」に登録している「' + hits.map(escapeHtml).join('」「') + '」が、材料に含まれている可能性があります。材料をご確認のうえ、もう一度作成してみてください。</p>';
   }
 
+  // 家電の容量(最大ml)を超えたまま残った品があれば、結果の上に注意を表示する(作り直しの上限まで試しても直らなかった場合)
+  function renderCapacityWarn(hits){
+    if(!Array.isArray(hits) || !hits.length) return '';
+    return '<p class="nutrition-warn">' + hits.map(h => '「' + escapeHtml(h.dish) + '」は、「' + escapeHtml(h.appliance) + '」の容量(最大' + escapeHtml(h.maxMl) + 'ml)を超えている可能性があります(材料の合計 約' + escapeHtml(h.volumeMl) + 'ml)。一度に入れず、分けて作るか、もう一度作成してみてください。').join('<br>') + '</p>';
+  }
+
   // 成分表と照合できなかった食材・値がなかった食材があれば、栄養量の下に知らせる
   function renderNutritionWarn(d){
     const c = d.nutritionCheck;
@@ -508,7 +514,7 @@
     return parts.length ? '<p class="dish-macro dish-effort">' + parts.join(' ・ ') + '</p>' : '';
   }
 
-  function renderCreatedCombo(dishes, nutritionOk, targetCheck, excludedHits, effortSel){
+  function renderCreatedCombo(dishes, nutritionOk, targetCheck, excludedHits, effortSel, capacityHits){
     // effortSel: 品ごとの手間度の指定の配列(無ければ手間の注意は出さない)
     // このバッチで実際に値が入っている指標だけをバッジ・表示対象にする(選択しなかった指標は表示しない)
     const shown = NUTRIENT_METRICS.filter(m => dishes.some(d => d[m.id] != null));
@@ -524,6 +530,7 @@
           }).join('')}
         </div>` : ''}
         ${renderExcludedWarn(excludedHits)}
+        ${renderCapacityWarn(capacityHits)}
         ${nutritionOk ? renderTargetCheck(targetCheck) : ''}
         ${renderEffortWarn(dishes, effortSel)}
         ${dishes.map((d, i) => `
@@ -669,7 +676,7 @@
       recipes.push(recipe);
       return recipe;
     });
-    renderCreatedCombo(dishes, nutritionOk, data.targetCheck, data.excludedHits, requestedEfforts(logContext.request, dishes.length));
+    renderCreatedCombo(dishes, nutritionOk, data.targetCheck, data.excludedHits, requestedEfforts(logContext.request, dishes.length), data.capacityHits);
   }
 
   // 終了処理(成功・失敗どちらでも)。ジョブの控えを消し、待機表示を閉じる

@@ -50,6 +50,12 @@ function ingredientMl(ing) {
   return Number.isFinite(g) && g > 0 ? g : 0;
 }
 
+// 1品の材料ごとの量(ml相当)。量の大きい順。作り直しの依頼文で、どれを減らすかを示すために使う
+export function ingredientVolumes(dish) {
+  const list = dish && Array.isArray(dish.ingredientDetails) ? dish.ingredientDetails : [];
+  return list.map((i) => ({ name: String((i && i.name) || ""), ml: Math.round(ingredientMl(i)) })).filter((x) => x.ml > 0).sort((a, b) => b.ml - a.ml);
+}
+
 // 1品の材料の合計(ml相当)
 export function dishVolumeMl(dish) {
   const list = dish && Array.isArray(dish.ingredientDetails) ? dish.ingredientDetails : [];
@@ -58,16 +64,14 @@ export function dishVolumeMl(dish) {
 
 const squash = (s) => norm(s).toLowerCase().replace(/[\s・･\-ー_()()「」]/g, "");
 
-// その品が、その家電を使うか。
-//   ・AIが dish.appliance(使う家電の名前。使わないなら null)を返していれば、それを信じる
-//   ・返していない(古い返答・欄の欠け)ときは、品名と手順に家電の名前(の主な単語)が書かれているかで判断する
+// その品が、その家電を使うか。次のどちらかなら「使う」とみなす(AIの申告の書き間違い・null で、確認をすり抜けないため)
+//   ・AIが dish.appliance(使う家電の名前)に、その家電の名前を書いている
+//   ・品名・手順に、その家電の名前(の主な単語)が書かれている
 function usesAppliance(dish, appliance) {
   const name = squash(appliance.name);
   if (!name) return false;
-  if (dish && Object.prototype.hasOwnProperty.call(dish, "appliance")) {
-    const a = squash(dish.appliance);
-    return !!a && (a.includes(name) || name.includes(a));
-  }
+  const declared = squash(dish && dish.appliance);
+  if (declared && (declared.includes(name) || name.includes(declared))) return true;
   const text = squash([dish && dish.name].concat((dish && dish.steps) || []).join(" "));
   if (text.includes(name)) return true;
   const tokens = norm(appliance.name).split(/[\s・･]+/).map(squash).filter((t) => t.length >= 3);
@@ -85,7 +89,7 @@ export function findCapacityHits(dishes, appliances) {
     dishes.forEach((dish, i) => {
       if (!usesAppliance(dish, a)) return;
       const volumeMl = Math.round(dishVolumeMl(dish));
-      if (volumeMl > maxMl) out.push({ dishIndex: i, dish: String((dish && dish.name) || ""), appliance: a.name, volumeMl, maxMl });
+      if (volumeMl > maxMl) out.push({ dishIndex: i, dish: String((dish && dish.name) || ""), appliance: a.name, volumeMl, maxMl, items: ingredientVolumes(dish).slice(0, 6) });
     });
   }
   return out;

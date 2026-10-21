@@ -69,8 +69,12 @@ const POT = { name: "レコルト 調理ポット", policy: "optional", note: ""
   assert.equal(hits.length, 1);
   assert.equal(hits[0].dish, "きのこたっぷり彩りポタージュ"); assert.equal(hits[0].maxMl, 600); assert.equal(hits[0].dishIndex, 0);
   assert.deepEqual(findCapacityHits([smallSoup], [POT]), []);
-  // 家電を使わない品(appliance: null)は、材料が多くても対象外
-  assert.deepEqual(findCapacityHits([{ ...bigSoup, appliance: null }], [POT]), []);
+  // 家電を使わない品(appliance: null で、手順にも家電の名前が無い)は、材料が多くても対象外
+  assert.deepEqual(findCapacityHits([{ ...bigSoup, appliance: null, steps: ["鍋で煮る"] }], [POT]), []);
+  // AIが appliance を null にしても、手順にその家電の名前があれば「使う」とみなす(確認をすり抜けさせない)
+  assert.equal(findCapacityHits([{ ...bigSoup, appliance: null }], [POT]).length, 1);
+  // AIの書いた家電名が登録名とずれていても(別の家電名・誤記)、手順に登録名があれば対象
+  assert.equal(findCapacityHits([{ ...bigSoup, appliance: "スープメーカー" }], [POT]).length, 1);
   // 容量が読めない・specが無い家電は調べない
   assert.deepEqual(findCapacityHits([bigSoup], [{ ...POT, spec: { ...POT.spec, capacity: "Maxラインまで" } }]), []);
   assert.deepEqual(findCapacityHits([bigSoup], [{ name: "レコルト 調理ポット", policy: "optional", note: "" }]), []);
@@ -87,11 +91,20 @@ const POT = { name: "レコルト 調理ポット", policy: "optional", note: ""
   ok("容量が読み取れる家電だけを、プロンプト用に一覧にする");
 }
 
+{ // 実際に容量オーバーのまま画面に出た、2回目のレシピ(野菜850g+豆乳180ml)。AIが appliance を null にしても検出できる
+  const shot = { name: "彩り野菜の豆乳ポタージュ", appliance: null, steps: ["レコルト 調理ポットにすべての野菜、豆乳…を入れ、合計量が600ml以下であることを確認する"],
+    ingredientDetails: [ing("にんじん", "200g(約1.5本)", 200), ing("玉ねぎ", "1個(180g)", 180), ing("しめじ", "120g(約1パック)", 120), ing("ブロッコリー", "200g(約3/4株)", 200),
+      ing("ほうれん草", "150g(約3/4束)", 150), ing("豆乳(無調整)", "180ml", 186), ing("鶏ガラスープの素", "小さじ1", 3), ing("塩", "小さじ1/4", 1.5), ing("ごま油", "小さじ1", 4)] };
+  const h = findCapacityHits([shot], [POT]);
+  assert.equal(h.length, 1); assert.ok(h[0].volumeMl > 1000 && h[0].maxMl === 600);
+  ok("実際に出た容量オーバーのレシピ(約" + h[0].volumeMl + "ml)を、appliance が null でも検出する");
+}
+
 // ==== B. プロンプトと返答の解析(AIは呼ばない) ====
 const baseReq = { ingredients: "", mood: "", count: 1, metrics: [{ id: "protein", label: "たんぱく質", unit: "g", target: 78 }] };
 {
   const p = buildPrompt({ ...baseReq, appliances: [POT] });
-  assert.match(p, /最大600mlまで/); assert.match(p, /"appliance"/);
+  assert.match(p, /最大600mlまで/); assert.match(p, /"appliance"/); assert.match(p, /"applianceMl"/);
   const p0 = buildPrompt({ ...baseReq, appliances: [] });
   assert.doesNotMatch(p0, /"appliance"/); assert.doesNotMatch(p0, /最大\d+mlまで/);
   const pNoCap = buildPrompt({ ...baseReq, appliances: [{ ...POT, spec: { ...POT.spec, capacity: "" } }] });
@@ -102,8 +115,10 @@ const baseReq = { ingredients: "", mood: "", count: 1, metrics: [{ id: "protein"
   const body = [{ name: "A", type: "スープ", ingredients: [{ name: "水", amount: "300ml", grams: 0, food: "" }], steps: ["煮る"], appliance: "レコルト 調理ポット" },
                 { name: "B", type: "炒め物", ingredients: [{ name: "鶏肉", amount: "100g", grams: 100, food: "" }], steps: ["焼く"], appliance: null },
                 { name: "C", type: "炒め物", ingredients: [{ name: "鶏肉", amount: "100g", grams: 100, food: "" }], steps: ["焼く"] }];
+  body[0].applianceMl = 1039;
   const dishes = parseDishes(JSON.stringify(body), { count: 3 });
   assert.equal(dishes[0].appliance, "レコルト 調理ポット"); assert.equal(dishes[1].appliance, null); assert.equal("appliance" in dishes[2], false);
+  assert.equal(dishes[0].applianceMl, 1039); assert.equal("applianceMl" in dishes[1], false);
   ok("返答の解析: appliance は文字列/null で保持し、欄が無ければ付けない");
 }
 {
@@ -111,6 +126,7 @@ const baseReq = { ingredients: "", mood: "", count: 1, metrics: [{ id: "protein"
   const hits = findCapacityHits([bigSoup], [POT]);
   const r = buildRetryPrompt({ ...baseReq, appliances: [POT] }, [bigSoup], check, [], hits);
   assert.match(r, /家電の容量を超えていました/); assert.match(r, /最大600ml/); assert.match(r, /きのこたっぷり彩りポタージュ/);
+  assert.match(r, /あと約6\d\dml減らす/); assert.match(r, /量の多い材料: .*ブロッコリー 250ml相当/);
   const r0 = buildRetryPrompt({ ...baseReq, appliances: [POT] }, [bigSoup], check, [], []);
   assert.doesNotMatch(r0, /家電の容量を超えていました/);
   ok("作り直しの依頼文: 容量超過の品名・量・最大が入る(超過なしなら入らない)");
