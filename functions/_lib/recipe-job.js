@@ -177,8 +177,9 @@ async function startJob(env, user, body, deps, now = Date.now()) {
   // ユーザーごとに登録された「使わない食材」を読む(DBを読むだけ。AIは呼ばない)。
   // 画面からは受け取らない(本人の登録内容だけが使われる)。読めなかったときは、除外が効かないまま作らないよう、
   // 利用回数を消費する前に失敗にする。
+  // 画面のスイッチで「今回は使わない食材を外す」(req.useExcludedFoods === false)と指定されたときは、読まずに空にする(登録そのものは変えない)
   try {
-    req.excluded = deps.loadExcludedFoods ? await deps.loadExcludedFoods(env, user.id) : [];
+    req.excluded = req.useExcludedFoods !== false && deps.loadExcludedFoods ? await deps.loadExcludedFoods(env, user.id) : [];
   } catch (e) {
     console.error("loadExcludedFoods failed: " + (e && e.message));
     trace.error("load_excluded_failed", e);
@@ -230,6 +231,7 @@ async function startJob(env, user, body, deps, now = Date.now()) {
     targets: req.metrics.map((m) => m.id + "=" + m.target + m.unit),
     ingredientsChars: req.ingredients.length, moodChars: req.mood.length,
     excludedCount: req.excluded.length,
+    useExcludedFoods: req.useExcludedFoods !== false,
     personalNotesCount: req.personalNotes.length,
     appliancesCount: req.appliances.length,
     useAppliances: req.useAppliances !== false,

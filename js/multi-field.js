@@ -28,6 +28,17 @@
     '.add-row-btn svg{width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:2.2; stroke-linecap:round;}' +
     '.add-row-btn:active{background:var(--brand-soft);}' +
     '.add-row-btn:disabled{opacity:.45; cursor:default;}' +
+    '.chip-box{display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:8px 10px; min-height:48px; border:1.5px solid var(--line-strong); border-radius:var(--radius-sm); background:var(--card);}' +
+    '.chip-box:focus-within{border-color:var(--brand);}' +
+    '.chip-items{display:contents;}' +
+    '.chip{display:inline-flex; align-items:center; gap:2px; padding:4px 4px 4px 12px; border-radius:100px; background:var(--brand-soft); color:var(--brand); font-size:14px; font-weight:700;}' +
+    '.chip-remove{width:28px; height:28px; display:grid; place-items:center; border:none; border-radius:50%; background:transparent; color:var(--brand); cursor:pointer;}' +
+    '.chip-remove svg{width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:2.4; stroke-linecap:round;}' +
+    '.chip-input{flex:1 1 120px; min-width:0; border:none; outline:none; background:transparent; font:inherit; font-size:16px; padding:6px 2px;}' +
+    '.recent-box{margin-top:8px; display:flex; flex-wrap:wrap; align-items:center; gap:6px;}' +
+    '.recent-label{font-size:12px; color:var(--ink-faint); margin-right:2px;}' +
+    '.recent-chip{min-height:32px; padding:4px 12px; border:1.5px dashed var(--line-strong); border-radius:100px; background:transparent; color:var(--ink-soft); font-size:13px; font-weight:600; cursor:pointer;}' +
+    '.recent-chip:active{background:var(--brand-soft);}' +
     '.dish-card + .dish-card{margin-top:20px; padding-top:18px; border-top:1.5px dashed var(--line-strong);}' +
     '.dish-card-title{margin:0 0 12px; font-size:15px; font-weight:700; color:var(--ink);}';
 
@@ -155,6 +166,167 @@
     return { getValues: getValues, getText: getText, setValues: setValues, add: add, remove: remove };
   }
 
+
+  // ==== 食材のチップ入力(1つの入力欄に打って Enter / スペース / 読点で「チップ」にする) ====
+  // createMultiField と同じ形({ getValues, getText, setValues, add, remove })で使える。
+  //   ・まだチップにしていない入力中の文字も、getValues / getText に含める(「作成」を押す直前に打った分が漏れない)
+  //   ・区切りは 空白・カンマ・読点。同じ食材は1つにまとめる。最大 maxRows 個・1つ maxLen 文字
+  //   ・「最近使った食材」は、この端末の localStorage にだけ控える(サーバーへは送らない)。タップでチップに追加できる
+  // この操作ではAIは呼ばれない(費用は発生しない)。
+  const RECENT_INGREDIENTS_KEY = 'recipeRouletteRecentIngredientsV1';
+  const RECENT_INGREDIENTS_MAX = 12;
+  const chipRefreshers = [];
+  function splitIngredients(text){
+    return String(text).split(/[\s,、，]+/).map(t => t.trim()).filter(Boolean);
+  }
+  function readRecentIngredients(){
+    try {
+      const raw = JSON.parse(localStorage.getItem(RECENT_INGREDIENTS_KEY) || '[]');
+      return Array.isArray(raw) ? raw.filter(x => typeof x === 'string' && x).slice(0, RECENT_INGREDIENTS_MAX) : [];
+    } catch(e){ return []; }
+  }
+  // 作成に使った食材を「最近使った食材」の先頭に足す(新しい順・重複なし・最大12件)
+  function rememberRecentIngredients(list){
+    try {
+      const used = (Array.isArray(list) ? list : []).map(x => String(x).trim()).filter(Boolean);
+      if(!used.length) return;
+      const next = used.concat(readRecentIngredients().filter(x => !used.includes(x)));
+      localStorage.setItem(RECENT_INGREDIENTS_KEY, JSON.stringify(next.slice(0, RECENT_INGREDIENTS_MAX)));
+    } catch(e){ /* 控えられないだけ。作成そのものは止めない */ }
+    chipRefreshers.forEach(fn => { try { fn(); } catch(e){ /* 表示だけ */ } });
+  }
+
+  function createChipField(cfg){
+    const listEl = cfg.listEl;
+    let chips = [];
+    let inputEl = null, itemsEl = null, recentEl = null;
+    const clip = (t) => String(t).slice(0, cfg.maxLen);
+
+    function allValues(){
+      const seen = new Set(), result = [];
+      chips.concat(inputEl ? splitIngredients(inputEl.value).map(clip) : []).forEach(v => {
+        const t = String(v).trim();
+        if(t && !seen.has(t)){ seen.add(t); result.push(t); }
+      });
+      return result.slice(0, cfg.maxRows);
+    }
+    function getValues(){ return allValues(); }
+    function getText(){ return allValues().join(cfg.joiner); }
+    function sync(){ cfg.valueEl.value = getText(); }
+
+    function renderChips(){
+      itemsEl.textContent = '';
+      chips.forEach((name, i) => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.appendChild(document.createTextNode(name));
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'chip-remove';
+        b.dataset.idx = String(i);
+        b.setAttribute('aria-label', '「' + name + '」を削除');
+        b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>';
+        chip.appendChild(b);
+        itemsEl.appendChild(chip);
+      });
+      const full = chips.length >= cfg.maxRows;
+      inputEl.disabled = full;
+      inputEl.placeholder = chips.length ? (full ? '最大' + cfg.maxRows + '個です' : '続けて入力') : '例: 鶏むね肉 キャベツ(Enterで追加)';
+      renderRecent();
+    }
+    function renderRecent(){
+      if(!recentEl) return;
+      const choices = readRecentIngredients().filter(x => !chips.includes(x));
+      recentEl.textContent = '';
+      recentEl.hidden = !choices.length || chips.length >= cfg.maxRows;
+      if(recentEl.hidden) return;
+      const label = document.createElement('span');
+      label.className = 'recent-label';
+      label.textContent = '最近使った食材';
+      recentEl.appendChild(label);
+      choices.forEach(name => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'recent-chip';
+        b.dataset.name = name;
+        b.textContent = '+ ' + name;
+        recentEl.appendChild(b);
+      });
+    }
+    // 入力中の文字を、区切りごとにチップにする(残りは入力欄に戻す)
+    function commitDraft(keepLast){
+      const raw = inputEl.value;
+      const parts = splitIngredients(raw);
+      const endsWithDelimiter = /[\s,、，]$/.test(raw);
+      const commit = keepLast || endsWithDelimiter ? parts : parts.slice(0, -1);
+      const rest = keepLast || endsWithDelimiter ? '' : (parts[parts.length - 1] || '');
+      let changed = false;
+      commit.map(clip).forEach(t => {
+        if(chips.length < cfg.maxRows && !chips.includes(t)){ chips.push(t); changed = true; }
+      });
+      inputEl.value = rest;
+      if(changed || commit.length) renderChips();
+      sync();
+    }
+    function add(){ if(inputEl) { commitDraft(true); inputEl.focus(); } }
+    function remove(i){
+      if(!(i >= 0 && i < chips.length)) return;
+      chips.splice(i, 1);
+      renderChips(); sync();
+    }
+    function setValues(list){
+      chips = [];
+      (Array.isArray(list) ? list : []).forEach(x => splitIngredients(x).map(clip).forEach(t => { if(!chips.includes(t) && chips.length < cfg.maxRows) chips.push(t); }));
+      if(inputEl) inputEl.value = '';
+      if(itemsEl) renderChips();
+      sync();
+    }
+
+    // 骨組み(入力欄は作り直さない = 入力中に再描画でキーボードが閉じない)
+    listEl.innerHTML =
+      '<div class="chip-box"><span class="chip-items"></span>' +
+        '<input type="text" class="chip-input" data-idx="0" maxlength="' + (cfg.maxLen * 4) + '" autocomplete="off" autocapitalize="none" enterkeyhint="done" aria-label="' + multiFieldEscape(cfg.label) + '"></div>' +
+      '<div class="recent-box" hidden></div>';
+    inputEl = listEl.querySelector('.chip-input');
+    itemsEl = listEl.querySelector('.chip-items');
+    recentEl = listEl.querySelector('.recent-box');
+    if(cfg.addBtn){
+      cfg.addBtn.hidden = true;
+      const hint = cfg.addBtn.nextElementSibling;
+      if(hint && hint.classList && hint.classList.contains('input-hint')) hint.textContent = '食材を入力して Enter かスペースで追加します(最大' + cfg.maxRows + '個)。空欄なら食材もおまかせで考えます。';
+    }
+
+    listEl.addEventListener('input', (e) => {
+      if(e.target !== inputEl) return;
+      if(e.isComposing) { sync(); return; }                    // 変換中は区切らない
+      if(/[\s,、，]/.test(inputEl.value)) commitDraft(false); else sync();
+    });
+    listEl.addEventListener('compositionend', () => { if(/[\s,、，]/.test(inputEl.value)) commitDraft(false); else sync(); });
+    listEl.addEventListener('keydown', (e) => {
+      if(e.target !== inputEl) return;
+      if(e.key === 'Enter'){
+        if(e.isComposing || e.keyCode === 229) return;          // 変換を確定するEnterでは動かさない
+        e.preventDefault();
+        if(inputEl.value.trim()) commitDraft(true); else inputEl.blur();
+      } else if(e.key === 'Backspace' && !inputEl.value && chips.length){
+        remove(chips.length - 1);
+      }
+    });
+    listEl.addEventListener('focusout', (e) => { if(e.target === inputEl && inputEl.value.trim()) commitDraft(true); });
+    listEl.addEventListener('click', (e) => {
+      const rm = e.target && e.target.closest ? e.target.closest('.chip-remove') : null;
+      if(rm){ remove(Number(rm.dataset.idx)); return; }
+      const rc = e.target && e.target.closest ? e.target.closest('.recent-chip') : null;
+      if(rc && chips.length < cfg.maxRows && !chips.includes(rc.dataset.name)){ chips.push(rc.dataset.name); renderChips(); sync(); }
+      else if(e.target && e.target.closest && e.target.closest('.chip-box') && !rm && inputEl && !inputEl.disabled) inputEl.focus();
+    });
+    chipRefreshers.push(renderRecent);
+
+    renderChips();
+    sync();
+    return { getValues: getValues, getText: getText, setValues: setValues, add: add, remove: remove };
+  }
+
   // 「作る」タブの品ごとのカード(index.html の #create-dish-1〜3)を、動的な入力欄にする。
   //   カードの中の要素の id: create-dish-{n}-title / create-dish-{n}-ingredients-list・-add / create-dish-{n}-mood-list・-add
   // 返り値(createMultiFields):
@@ -164,7 +336,7 @@
   //   getDishInputs(n) … 1〜n品目の入力 [{ ingredients: '食材 食材', mood: '条件、条件' }, …]
   const MAX_DISH_CARDS = 3;
   const DISH_FIELD_DEFS = [
-    { key: 'ingredients', joiner: ' ', maxRows: 10, maxLen: 30, label: '使いたい食材',
+    { key: 'ingredients', joiner: ' ', maxRows: 10, maxLen: 30, label: '使いたい食材', chips: true,
       placeholders: ['例: 鶏むね肉', '例: キャベツ', '例: 卵', '食材名'] },
     { key: 'mood', joiner: '、', maxRows: 5, maxLen: 40, label: '料理名・雰囲気・ジャンル',
       placeholders: ['例: 親子丼', '例: さっぱり', '例: ピリ辛', '料理名・雰囲気・ジャンル'] },
@@ -239,7 +411,7 @@
         const fields = {};
         card.parts.forEach(p => {
           // 品によって読み上げの名前を変える(「2品目の使いたい食材 1」)
-          fields[p.def.key] = createMultiField({
+          fields[p.def.key] = (p.def.chips ? createChipField : createMultiField)({
             listEl: p.listEl, addBtn: p.addBtn, valueEl: { value: '' },
             joiner: p.def.joiner, maxRows: p.def.maxRows, maxLen: p.def.maxLen,
             label: (idx + 1) + '品目の' + p.def.label, placeholders: p.def.placeholders,
@@ -261,6 +433,7 @@
         const count = Math.max(1, Math.min(MAX_DISH_CARDS, Number(n) || 1));
         return result.dishes.slice(0, count).map(f => ({ ingredients: f.ingredients.getText(), mood: f.mood.getText() }));
       };
+      result.rememberRecentIngredients = rememberRecentIngredients;
       result.setCount(1);
       result.ready = true;
     } catch(err){

@@ -209,6 +209,13 @@ function parseCreateRequest(body) {
     if (body.useAppliances === false) useAppliances = false;
   }
 
+  // 登録した「使わない食材」を今回だけ外すか(画面のスイッチ)。受け取るのは「外す(false)」という意思だけ(保存済みの登録は変えない)。boolean 以外は不正。無い(未指定)なら従来どおり除外する
+  let useExcludedFoods;
+  if (body.useExcludedFoods !== undefined && body.useExcludedFoods !== null) {
+    if (typeof body.useExcludedFoods !== "boolean") return { error: "使わない食材の適用の指定が不正です" };
+    if (body.useExcludedFoods === false) useExcludedFoods = false;
+  }
+
   // 家電ごとの「使わない」指定(名前の配列)。受け取るのは名前だけで、家電の中身は受け取らない(サーバーが保存済みの本人の分を読み、名前が合うものを外す)。
   // 配列(最大20件・各100文字まで)の文字列だけ有効。無い(未指定/null/空)なら全部使う
   let excludeAppliances;
@@ -232,6 +239,7 @@ function parseCreateRequest(body) {
   const value = { ingredients, mood, count, metrics };
   if (onlyListed) value.onlyListed = true;
   if (useAppliances === false) value.useAppliances = false;
+  if (useExcludedFoods === false) value.useExcludedFoods = false;
   if (excludeAppliances) value.excludeAppliances = excludeAppliances;
   if (dishes) value.dishes = dishes;
   if (maxMinutes !== undefined) value.maxMinutes = maxMinutes;

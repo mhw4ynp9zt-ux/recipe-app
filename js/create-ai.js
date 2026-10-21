@@ -354,7 +354,7 @@
         '<div class="field effort-field" id="effort-field-' + n + '">' +
           '<label id="effort-label-' + n + '">手間度(任意)</label>' +
           '<div class="count-toggle effort-row" id="effort-row-' + n + '" role="group" aria-labelledby="effort-label-' + n + '"></div>' +
-          '<p class="input-hint" id="effort-desc-' + n + '" aria-live="polite"></p>' +
+          '<ul class="effort-desc-list" id="effort-desc-' + n + '" aria-live="polite"></ul>' +
         '</div>');
     } catch(e){ /* チップが出ないだけ。作成そのものは止めない */ }
   }
@@ -418,13 +418,27 @@
       if(!area || !area.parentNode || typeof area.insertAdjacentHTML !== 'function') return;
       area.insertAdjacentHTML('beforebegin',
         '<section class="panel step" id="appliance-use-panel" hidden>' +
-          '<div class="step-head"><h2>調理家電</h2><span class="step-tag">任意</span></div>' +
+          '<div class="step-head"><h2>今回だけの設定</h2><span class="step-tag">任意</span></div>' +
+          '<div class="excluded-use-row field" hidden>' +
+            '<label>使わない食材(登録済み <span class="excluded-use-count">0</span>件)</label>' +
+            '<div class="count-toggle" role="group" aria-label="使わない食材を除外するか">' +
+              '<button type="button" class="toggle-btn excluded-use-btn active" data-use="1" aria-pressed="true">除外する</button>' +
+              '<button type="button" class="toggle-btn excluded-use-btn" data-use="0" aria-pressed="false">今回は除外しない</button>' +
+            '</div>' +
+            '<p class="input-hint excluded-use-hint" aria-live="polite"></p>' +
+          '</div>' +
           '<div class="appliance-use-list"></div>' +
           '<p class="input-hint appliance-use-hint" aria-live="polite"></p>' +
         '</section>');
       applianceSwitchEl = document.getElementById('appliance-use-panel');
       if(!applianceSwitchEl) return;
       applianceSwitchEl.addEventListener('click', (e) => {
+        const exBtn = e.target.closest && e.target.closest('.excluded-use-btn');
+        if(exBtn){
+          skipExcludedFoods = exBtn.dataset.use === '0';
+          renderExcludedUse();
+          return;
+        }
         const btn = e.target.closest && e.target.closest('.appliance-use-btn');
         if(!btn) return;
         const name = btn.dataset.name;
@@ -434,6 +448,34 @@
         renderApplianceSwitch();
       });
     } catch(e){ applianceSwitchEl = null; }
+  }
+  // 「使わない食材」を今回だけ除外しない(保存しない。画面を開き直す・ジョブを作ると「除外する」に戻る。登録そのものは変えない)
+  let skipExcludedFoods = false;
+  window.isExcludedFoodsSkipped = function(){ return skipExcludedFoods && excludedFoodsAvailable(); };
+  function savedExcludedFoods(){
+    return typeof window.getSavedExcludedFoods === 'function' ? window.getSavedExcludedFoods() : [];
+  }
+  function excludedFoodsAvailable(){
+    return !!applianceSwitchEl && !applianceSwitchEl.hidden && isLoggedIn() && savedExcludedFoods().length > 0;
+  }
+  function renderExcludedUse(){
+    if(!applianceSwitchEl) return;
+    const row = applianceSwitchEl.querySelector('.excluded-use-row');
+    if(!row) return;
+    const foods = savedExcludedFoods();
+    row.hidden = !(isLoggedIn() && foods.length > 0);
+    const cnt = row.querySelector('.excluded-use-count');
+    if(cnt) cnt.textContent = String(foods.length);
+    row.querySelectorAll('.excluded-use-btn').forEach(b => {
+      const on = (b.dataset.use === '0') === skipExcludedFoods;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    const hint = row.querySelector('.excluded-use-hint');
+    if(hint) hint.textContent = skipExcludedFoods
+      ? '今回だけ、登録した食材も使う可能性があります。アレルギーのある食材は「除外する」のままにしてください。'
+      : foods.slice(0, 5).join('、') + (foods.length > 5 ? ' ほか' : '') + ' を使わずに作ります。';
+    try { document.dispatchEvent(new CustomEvent('excluded-foods-skip-changed')); } catch(e){ /* 通知できなくても作成は続ける */ }
   }
   function applianceSwitchVisible(){
     return !!applianceSwitchEl && !applianceSwitchEl.hidden;
@@ -449,10 +491,15 @@
       ensureApplianceSwitch();
       if(!applianceSwitchEl) return;
       renderApplianceSwitch();
-      applianceSwitchEl.hidden = !(isLoggedIn() && applianceNames().length > 0);
+      applianceSwitchEl.hidden = !(isLoggedIn() && (applianceNames().length > 0 || savedExcludedFoods().length > 0));
+      const applRows = applianceSwitchEl.querySelector('.appliance-use-list');
+      if(applRows) applRows.hidden = !(applianceNames().length > 0);
+      if(!isLoggedIn() || !savedExcludedFoods().length) skipExcludedFoods = false;
+      renderExcludedUse();
     } catch(e){ /* 出し分けできなくても、作成そのものは止めない */ }
   }
   document.addEventListener('appliances-changed', updateApplianceSwitchVisibility);
+  document.addEventListener('excluded-foods-changed', updateApplianceSwitchVisibility);
   updateApplianceSwitchVisibility();
 
   // 「買い足しOK」のスイッチ(食材の入力欄のすぐ下。index.html は変更不要)。
@@ -523,17 +570,27 @@
       return `<button type="button" class="toggle-btn effort-btn${on ? ' active' : ''}" data-effort="${level === null ? '' : level}" aria-pressed="${on ? 'true' : 'false'}">${label}</button>`;
     };
     rowEl.innerHTML = chip(null, '指定なし') + EFFORT_OPTIONS.map(o => chip(o.level, o.label)).join('');
-    // 選んだ手間度の説明(指定なしのときは空)
+    // 手間度の説明は、選ぶ前から全段階を常に表示する(選んでいる段階だけ強調)
     const descEl = document.getElementById('effort-desc-' + (i + 1));
-    const opt = EFFORT_OPTIONS.find(o => o.level === sel);
-    if(descEl) descEl.textContent = opt ? opt.short : '';
+    if(descEl){
+      descEl.textContent = '';
+      EFFORT_OPTIONS.forEach(o => {
+        const li = document.createElement('li');
+        li.className = 'effort-desc-item' + (o.level === sel ? ' active' : '');
+        const b = document.createElement('strong');
+        b.textContent = o.label;
+        li.appendChild(b);
+        li.appendChild(document.createTextNode(' ' + o.short));
+        descEl.appendChild(li);
+      });
+    }
   }
   if(effortRowEls.some(Boolean)){
     try {
       if(!document.getElementById('effort-style') && document.head && document.createElement){
         const style = document.createElement('style');
         style.id = 'effort-style';
-        style.textContent = '.effort-row{grid-template-columns:repeat(5,1fr);} .effort-row .toggle-btn{font-size:12.5px; padding:0 2px;}';
+        style.textContent = '.effort-row{grid-template-columns:repeat(5,1fr);} .effort-row .toggle-btn{font-size:12.5px; padding:0 2px;} .effort-desc-list{list-style:none; margin:8px 0 0; padding:0; display:grid; gap:4px; font-size:12px; color:var(--ink-faint); line-height:1.5;} .effort-desc-item strong{font-weight:700; margin-right:2px;} .effort-desc-item.active{color:var(--brand); background:var(--brand-soft); border-radius:8px; padding:3px 8px;} .effort-desc-item.active strong{color:var(--brand);} .excluded-use-row .input-hint{margin:6px 0 0;}';
         document.head.appendChild(style);
       }
     } catch(e){ /* 見た目の調整だけ。作成そのものは止めない */ }
@@ -1006,6 +1063,11 @@
         body.excludeAppliances = excludedNow;
         logContext.request.excludeAppliances = excludedNow;
       }
+      // 「今回は除外しない」を選んでいるときだけ送る(登録は変えない。出ていないとき・「除外する」のときは従来どおり何も付けない)
+      if(excludedFoodsAvailable() && skipExcludedFoods){
+        body.useExcludedFoods = false;
+        logContext.request.useExcludedFoods = false;
+      }
       const requestBody = JSON.stringify(body);
       // ジョブを作るだけの短い要求(AIは呼ばれない)。応答が返る前に通信が切れた場合(iOS Safariでは TypeError "Load failed")だけ、
       // 1回だけ自動で再試行する。再試行しても、サーバーは実行中のジョブを重ねて作らない。
@@ -1042,6 +1104,14 @@
       }
       if(typeof resBody.data.jobId !== 'string') throw new Error('Unexpected response shape');
       started = { id: resBody.data.jobId, request: logContext.request, startedAt: Date.now(), resumed: !!resBody.data.resumed };
+      // 作成に使った食材を「最近使った食材」に控える(この端末の localStorage だけ。サーバーへは送らない)
+      try {
+        if(Array.isArray(body.dishes) && typeof createMultiFields !== 'undefined' && createMultiFields && typeof createMultiFields.rememberRecentIngredients === 'function'){
+          createMultiFields.rememberRecentIngredients(body.dishes.reduce((acc, d) => acc.concat(String(d.ingredients || '').split(/\s+/)), []));
+        }
+      } catch(e){ /* 控えられないだけ */ }
+      // 「今回だけ」の設定なので、ジョブを作ったら「除外する」に戻す(安全側。アレルギーの食材を次回うっかり使わないため)
+      if(skipExcludedFoods){ skipExcludedFoods = false; renderExcludedUse(); }
       if(resBody.data.resumed){
         // すでに作成中のものがあった(二重タップ・開き直しなど)。新しく作らず、その続きを表示する
         setLoadingSub('作成中のレシピがあるため、その続きを表示します');
