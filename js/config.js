@@ -14,6 +14,7 @@ const NUTRIENT_METRICS = [
   { id: 'salt',     label: '塩分',        unit: 'g',    default: 3,   enabledByDefault: false },
   { id: 'fiber',    label: '食物繊維',    unit: 'g',    default: 7,   enabledByDefault: false },
   { id: 'carbs',    label: '糖質',        unit: 'g',    default: 60,  enabledByDefault: false },
+  { id: 'carbohydrate', label: '炭水化物', unit: 'g',    default: 70,  enabledByDefault: false },
   { id: 'calories', label: 'カロリー',    unit: 'kcal', default: 600, enabledByDefault: false },
 ];
 

@@ -1,5 +1,5 @@
 // ==== 保存済みタブの「下から出るシート」の共通処理と、レシピの詳細シート ====
-// 一覧のタイルをタップすると、このシートに7指標・材料・作り方・栄養の計算内訳と、編集・削除ボタンが出ます。
+// 一覧のタイルをタップすると、このシートに8指標・材料・作り方・栄養の計算内訳と、編集・削除ボタンが出ます。
 // 絞り込みシート(saved-filter.js)も、開閉はここの openSavedSheet / closeSavedSheet を使います。
 // save.js の escapeSavedHtml / savedMetricValue / savedMetricText / renderSavedNutrition / getSaved / removeSaved、
 // config.js の NUTRIENT_METRICS、utils.js の withPieceCount、auth.js の isLoggedIn、recipe-edit.js の openRecipeEditor に依存します
@@ -85,7 +85,7 @@ function savedDetailHtml(d, loggedIn, opts){
   const readonly = !!(opts && opts.readonly);
   const titleId = (opts && opts.titleId) || 'saved-detail-title';
   const calories = NUTRIENT_METRICS.find(m => m.id === 'calories');
-  // 7指標は、検索・絞り込みの条件に関わらず、いつも全部出す(値の無い指標は「ー」)
+  // 8指標は、検索・絞り込みの条件に関わらず、いつも全部出す(値の無い指標は「ー」)
   const cell = (m) => '<div class="saved-nutri m-' + esc(m.id) + '"><dt>' + esc(m.label) + '</dt><dd>' + esc(savedMetricText(m, savedMetricValue(d, m.id))) + '</dd></div>';
   const tags = (d.type ? '<span class="dish-type-tag">' + esc(d.type) + '</span>' : '') +
     (typeof classifyTagsHtml === 'function' && typeof effectiveMain === 'function' ? classifyTagsHtml(d) : '');

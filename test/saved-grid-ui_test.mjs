@@ -83,7 +83,7 @@ try {
     const tile = await page.$eval('.saved-tile[data-id="r1"]', (el) => el.textContent);
     ["793", "kcal", "パスタ", "たんぱく質 59g", "脂質 20g", "糖質 87g", "塩分 4.9g", "食物繊維 8.8g", "野菜 110g"].forEach((x) => assert.ok(tile.includes(x), "タイルに「" + x + "」: " + tile));
     assert.ok(!/(^|[^A-Za-z])[PFC]\s?\d/.test(tile), "P/F/C の略称は使わない: " + tile);
-    assert.deepEqual(await page.$$eval('.saved-tile[data-id="r1"] .saved-tile-chip', (e) => e.map((x) => x.className.replace("saved-tile-chip m-", ""))), ["protein", "fat", "carbs", "salt", "fiber", "veg"], "6項目が同じ形のチップで、この順に出る");
+    assert.deepEqual(await page.$$eval('.saved-tile[data-id="r1"] .saved-tile-chip', (e) => e.map((x) => x.className.replace("saved-tile-chip m-", ""))), ["protein", "fat", "carbs", "carbohydrate", "salt", "fiber", "veg"], "7項目が同じ形のチップで、この順に出る");
     assert.equal(await total(), "6件");
     ok("2列のタイルで、新しい順に出る(カロリー・6項目のチップ・種類)");
 
@@ -132,7 +132,7 @@ try {
     assert.equal(sheetText.includes("役割"), false, "役割は一覧の上の切り替え側にある");
     assert.equal(sheetText.includes("ほかの栄養"), false, "「ほかの栄養」の見出しは無い");
     assert.equal(await page.$("#saved-filter-sheet details"), null, "折りたたみは無い");
-    assert.deepEqual(await page.$$eval("#saved-filter-sheet .range-row .range-label", (e) => e.map((x) => x.textContent.trim())), ["たんぱく質", "カロリー", "塩分", "野菜", "脂質", "食物繊維", "糖質"], "7指標が1つのリストに並ぶ");
+    assert.deepEqual(await page.$$eval("#saved-filter-sheet .range-row .range-label", (e) => e.map((x) => x.textContent.trim())), ["たんぱく質", "カロリー", "塩分", "野菜", "脂質", "食物繊維", "糖質", "炭水化物"], "8指標が1つのリストに並ぶ");
     for (const el of await page.$$("#saved-filter-sheet .range-row input")) assert.equal(await el.isVisible(), true, "最初から見えている");
     assert.equal(await page.$eval('#saved-filter-sheet [data-axis="genre"][data-value="韓国"]', (b) => b.disabled), true, "0件のチップは押せない");
     await shot("03-sheet");

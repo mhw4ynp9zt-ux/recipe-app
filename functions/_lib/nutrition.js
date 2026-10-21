@@ -33,6 +33,15 @@ const METRICS = {
       return r.chocdf != null ? Math.max(0, r.chocdf - (r.fib || 0)) : null;
     },
   },
+  // 炭水化物 = 成分表の「炭水化物」(糖質+食物繊維など)。未測定なら 利用可能炭水化物 + 食物繊維 で補う
+  carbohydrate: {
+    digits: 1,
+    get: (r) => {
+      if (r.chocdf != null) return r.chocdf;
+      const v = pick(r, ["choavl", "choavldf"]);
+      return v != null ? v + (r.fib || 0) : null;
+    },
+  },
   veg: { digits: 0, get: () => null }, // 食品群で数えるので下で別扱い
 };
 const METRIC_IDS = Object.keys(METRICS);
@@ -410,7 +419,7 @@ function round(v, digits) {
 // ==== 計算 ====
 
 // dishes: parseDishes() の結果(各品に ingredientDetails がある)。各品に nutrition などを書き足して返す。
-//   dish.nutrition       … { calories, protein, fat, salt, fiber, carbs, veg } (1品ぶんの合計)
+//   dish.nutrition       … { calories, protein, fat, salt, fiber, carbs, carbohydrate, veg } (1品ぶんの合計)
 //   dish.nutritionCheck  … { unmatched: [食材名], missing: [食材名] }  (計算に入れられなかったもの)
 //   dish.ingredientDetails[i].match … { foodNo, label } | null
 // activeIds に含まれる指標は dish[id] にも入れる(画面・保存済みレシピの既存の表示がそのまま使える)。

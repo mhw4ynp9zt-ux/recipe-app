@@ -4,7 +4,7 @@
 // savedCacheというメモリ上のキャッシュを介して読み書きします。
 // utils.js の withPieceCount、config.js の NUTRIENT_METRICS、auth.js の isLoggedIn に依存します。
 // replaceSaved は編集シート(recipe-edit.js)が保存に成功したときに呼びます。詳細シートの「編集」ボタンはログイン中だけ押せます。
-// 保存済み一覧はタイルを2列に並べ、タップで開く詳細シート(saved-sheet.js)に7指標・材料・作り方・栄養の計算内訳を出します。
+// 保存済み一覧はタイルを2列に並べ、タップで開く詳細シート(saved-sheet.js)に8指標・材料・作り方・栄養の計算内訳を出します。
 // 保存済み一覧の「栄養の計算内訳」は、create-ai.js の renderNutritionDetail/renderNutritionWarn を再利用して表示します
 // (「作る」タブの結果と同じ見た目。内訳は保存時にレシピ本体と一緒に保存されたデータを使います)。
 // サーバーへの保存・削除・取得の失敗は、error-log.js の logError で管理者向けエラーログに記録します
@@ -217,17 +217,18 @@
     return String(Math.round(v * k) / k) + unit;
   }
 
-  // タイルに出す6項目(この順)。どれも同じ形の色付きチップで出す
+  // タイルに出す7項目(この順)。どれも同じ形の色付きチップで出す
   const SAVED_TILE_CHIPS = [
     { id: 'protein', label: 'たんぱく質', digits: 0 },
     { id: 'fat',     label: '脂質',       digits: 0 },
     { id: 'carbs',   label: '糖質',       digits: 0 },
+    { id: 'carbohydrate', label: '炭水化物', digits: 0 },
     { id: 'salt',    label: '塩分',       digits: 1 },
     { id: 'fiber',   label: '食物繊維',   digits: 1 },
     { id: 'veg',     label: '野菜',       digits: 0 },
   ];
 
-  // 一覧のタイル1枚。「種類・料理名・カロリー・6項目のチップ(たんぱく質・脂質・糖質・塩分・食物繊維・野菜)」を出し、
+  // 一覧のタイル1枚。「種類・料理名・カロリー・7項目のチップ(たんぱく質・脂質・糖質・炭水化物・塩分・食物繊維・野菜)」を出し、
   // 材料・作り方・栄養の計算内訳は、タップで開くレシピの詳細シート(saved-sheet.js)に出す
   function savedTileHtml(d){
     const esc = escapeSavedHtml;

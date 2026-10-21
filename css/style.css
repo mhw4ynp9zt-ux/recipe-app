@@ -32,6 +32,7 @@
   --salt:#4A6D8C;     --salt-bg:#E2EAF1;
   --fiber:#3F8272;    --fiber-bg:#DFEDE8;
   --carbs:#9A7D1F;    --carbs-bg:#F3EBCF;
+  --carbohydrate:#8A6A2C; --carbohydrate-bg:#EFE0C2;
   --calories:#8C5A82; --calories-bg:#F0E2EC;
 
   --warn:#8A5A00;     --warn-bg:#FFF4DE;
@@ -321,6 +322,7 @@ select{
 .m-salt    {--c:var(--salt);     --c-bg:var(--salt-bg);}
 .m-fiber   {--c:var(--fiber);    --c-bg:var(--fiber-bg);}
 .m-carbs   {--c:var(--carbs);    --c-bg:var(--carbs-bg);}
+.m-carbohydrate {--c:var(--carbohydrate); --c-bg:var(--carbohydrate-bg);}
 .m-calories{--c:var(--calories); --c-bg:var(--calories-bg);}
 
 /* ---------- 目標値の入力 ---------- */
@@ -552,6 +554,7 @@ select{
 .badge.salt    {--c:var(--salt);     --c-bg:var(--salt-bg);}
 .badge.fiber   {--c:var(--fiber);    --c-bg:var(--fiber-bg);}
 .badge.carbs   {--c:var(--carbs);    --c-bg:var(--carbs-bg);}
+.badge.carbohydrate {--c:var(--carbohydrate); --c-bg:var(--carbohydrate-bg);}
 .badge.calories{--c:var(--calories); --c-bg:var(--calories-bg);}
 /* 目標の±5%に収まらなかった指標 */
 .badge.off{border-color:var(--c); border-style:dashed; background:var(--card);}
