@@ -773,6 +773,16 @@
         if(input) input.focus();
         renderNotesMeta();
       });
+      // 設定タブが隠れている間は高さを測れず(scrollHeight が 0)、欄が1行の高さのまま固定されて長い文章が切れていた。
+      // タブが表示されたとき・画面の幅が変わったとき(回転など)に、全部の欄の高さを測り直す。
+      let notesLastWidth = 0;
+      const refitNotes = function(){
+        const w = notesListEl.clientWidth;
+        if(w && w !== notesLastWidth){ notesLastWidth = w; notesInputs().forEach(fitNotesInput); }
+        else if(!w) notesLastWidth = 0;
+      };
+      if(typeof ResizeObserver === 'function') new ResizeObserver(refitNotes).observe(notesListEl);
+      window.addEventListener('resize', refitNotes);
       renderNotesRows([]);
       renderNotesMeta();
     } catch(err){
