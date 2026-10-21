@@ -324,8 +324,7 @@
     const btn = e.target.closest('.metric-toggle-btn');
     if(!btn) return;
     const id = btn.dataset.metric;
-    // 目安にする指標を1つも選ばない状態は避ける(AIへの目標指示が空になってしまうため)
-    if(enabledMetrics[id] && getActiveMetrics().length <= 1) return;
+    // 栄養の目標は必須ではない。全部外してもよい(その場合、AIには「栄養バランスの良い一般的な家庭料理」とだけ伝わり、目標との照合・作り直しは行われない)
     enabledMetrics[id] = !enabledMetrics[id];
     saveEnabledMetrics();
     renderMetricToggles();
@@ -485,8 +484,9 @@
           '.allow-extra-text .input-hint{margin:2px 0 0;}' +
           '.allow-extra input{flex:0 0 auto; width:48px; height:28px; margin:0; appearance:none; -webkit-appearance:none; border-radius:999px; background:var(--line-strong); position:relative; cursor:pointer; transition:background .15s;}' +
           '.allow-extra input::after{content:""; position:absolute; top:3px; left:3px; width:22px; height:22px; border-radius:50%; background:#fff; transition:transform .15s;}' +
-          '.allow-extra input:checked{background:var(--brand);}' +
-          '.allow-extra input:checked::after{transform:translateX(20px);}';
+          '.allow-extra input:checked{background:var(--accent-soft, var(--brand)); box-shadow:inset 0 0 0 2.5px var(--ink, #3B2F2A);}' +
+          '.allow-extra input:checked::after{transform:translateX(20px); background:var(--ink, #3B2F2A);}' +
+          '.allow-extra:has(input:checked){background:var(--accent-soft, var(--card));}';
         document.head.appendChild(style);
       }
       anchor.insertAdjacentHTML('afterend',
@@ -580,7 +580,7 @@
   // 全品の合計が目標の許容範囲(サーバーの recipe-prompt.js の TOLERANCE。現在±10%)に収まったかの表示
   // (サーバーが計算・必要ならAIに作り直させた結果)。作り直して収まった場合は、控えめに「自動調整した」ことだけ添える。
   function renderTargetCheck(tc, onlyListed){
-    if(!tc || !Array.isArray(tc.results)) return '';
+    if(!tc || !Array.isArray(tc.results) || !tc.results.length) return ''; // 目標を1つも選んでいないときは、照合結果を出さない
     if(tc.ok){
       const adjusted = tc.attempts > 1 ? '(目標値に合わせて自動調整しました)' : '';
       return '<p class="target-check">✓ 目標の±' + tc.tolerancePct + '%以内に収まっています' + adjusted + '</p>';
