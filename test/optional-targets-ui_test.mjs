@@ -67,16 +67,18 @@ try {
     assert.equal(await page.isChecked("#allow-extra-input"), true, "初期はON");
     const onBg = await bg(); const onRow = await rowBg();
     assert.equal(onBg, "rgb(242, 179, 170)", "ONのスイッチは、選択中のチップと同じやわらかいピンク: " + onBg);
-    assert.equal(onRow, "rgb(242, 179, 170)", "ONのときは行全体にも色がつく: " + onRow);
+    const cardBg = await page.$eval("#allow-extra-row", (el) => getComputedStyle(el).backgroundColor);
+    assert.notEqual(onRow, "rgb(242, 179, 170)", "行全体には色をつけない(スイッチだけ): " + onRow);
+    assert.equal(onRow, cardBg);
     await page.click("#allow-extra-row");
     assert.equal(await page.isChecked("#allow-extra-input"), false);
     await page.waitForTimeout(400); // 色の切り替えアニメーション(0.15秒)が終わるのを待つ
     const offBg = await bg(); const offRow = await rowBg();
-    assert.notEqual(offBg, onBg, "OFFでは色が変わる"); assert.notEqual(offRow, onRow, "OFFでは行の色も戻る");
+    assert.notEqual(offBg, onBg, "OFFでは色が変わる"); assert.equal(offRow, onRow, "行の色はON/OFFで変わらない");
     await page.click("#allow-extra-row");
     await page.waitForTimeout(400);
     assert.equal(await bg(), onBg, "もう一度ONにすると色が戻る");
-    ok("「買い足しOK」はONのときだけ色がつく(スイッチ・行とも)");
+    ok("「買い足しOK」はONのときだけスイッチに色がつく(行全体は変わらない)");
     assert.deepEqual(unexpectedExternal(seen), []); await ctx.close();
   }
 

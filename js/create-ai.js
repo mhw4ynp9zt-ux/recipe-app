@@ -485,8 +485,7 @@
           '.allow-extra input{flex:0 0 auto; width:48px; height:28px; margin:0; appearance:none; -webkit-appearance:none; border-radius:999px; background:var(--line-strong); position:relative; cursor:pointer; transition:background .15s;}' +
           '.allow-extra input::after{content:""; position:absolute; top:3px; left:3px; width:22px; height:22px; border-radius:50%; background:#fff; transition:transform .15s;}' +
           '.allow-extra input:checked{background:var(--accent-soft, var(--brand)); box-shadow:inset 0 0 0 2.5px var(--ink, #3B2F2A);}' +
-          '.allow-extra input:checked::after{transform:translateX(20px); background:var(--ink, #3B2F2A);}' +
-          '.allow-extra:has(input:checked){background:var(--accent-soft, var(--card));}';
+          '.allow-extra input:checked::after{transform:translateX(20px); background:var(--ink, #3B2F2A);}';
         document.head.appendChild(style);
       }
       anchor.insertAdjacentHTML('afterend',
