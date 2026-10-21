@@ -439,8 +439,15 @@
     return data;
   }
 
+  // レシピ作成画面(create-ai.js)の「調理家電を使う/使わない」スイッチが、登録の有無で出し分けるための通知(通信はしない)
+  window.getSavedApplianceCount = function(){ return saved.length; };
+  function notifyAppliancesChanged(){
+    try { document.dispatchEvent(new CustomEvent('appliances-changed', { detail: { count: saved.length } })); } catch(e){ /* 通知できなくても、登録・保存は止めない */ }
+  }
+
   function applyData(data){
     if(Array.isArray(data.appliances)) saved = data.appliances.map(normalize);
+    notifyAppliancesChanged();
     limits = {
       max: data.max || limits.max,
       maxNameLength: data.maxNameLength || limits.maxNameLength,
@@ -646,6 +653,7 @@
       saving = false;
       if(saveBtn) saveBtn.textContent = '保存';
       saved = [];
+      notifyAppliancesChanged();
       renderCards([]);
       showStatus('', false);
       if(addMsgEl) addMsgEl.textContent = '';

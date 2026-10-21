@@ -33,6 +33,8 @@
 //     (=AIの呼び出し回数は、家電の有無で変わらない。MAX_ATTEMPTS / MAX_AI_CALLS も変わらない)
 //     ただし「容量」だけは例外: 家電の容量(spec.capacity)の最大を超える品は、コード(appliance-capacity.js)で見つけて作り直しの対象にする。
 //     作り直しの回数・AI呼び出しの上限(MAX_ATTEMPTS / MAX_AI_CALLS)は変わらない(=1回の作成で費用が増える上限は変わらない)。
+//     画面のスイッチで「調理家電を使わない」を選んだとき(request.useAppliances === false)は、家電を読まず、指示にも容量チェックにも入れない
+//     (受け取るのはこの true/false だけ。家電の中身は画面から受け取らない)。
 //     容量で作り直したくないときは CAPACITY_RETRY を false にする(超えた品は result.capacityHits で知らせるだけになる)
 //
 // 依存(AI設定・プロンプト・栄養計算など)は deps で受け取る。本番は recipe-job-deps.js の defaultDeps、
@@ -194,8 +196,10 @@ async function startJob(env, user, body, deps, now = Date.now()) {
   // ユーザーごとに登録された「使っている調理家電」を読む(DBを読むだけ。AIは呼ばない)。
   // 「個人的な要望」と同じく、画面からは受け取らず(本人の登録内容だけが使われる)、読めなかったときは、
   // 家電が効かないまま作らないよう、利用回数を消費する前に失敗にする。
+  // 画面のスイッチで「調理家電を使わない」(req.useAppliances === false)と指定されたときは、読まずに空にする
+  // (AIへの指示にも、容量チェックにも家電が入らない。AIの呼び出し回数・上限は変わらない)。
   try {
-    req.appliances = deps.loadAppliances ? await deps.loadAppliances(env, user.id) : [];
+    req.appliances = req.useAppliances !== false && deps.loadAppliances ? await deps.loadAppliances(env, user.id) : [];
   } catch (e) {
     console.error("loadAppliances failed: " + (e && e.message));
     trace.error("load_appliances_failed", e);
@@ -219,6 +223,7 @@ async function startJob(env, user, body, deps, now = Date.now()) {
     excludedCount: req.excluded.length,
     personalNotesCount: req.personalNotes.length,
     appliancesCount: req.appliances.length,
+    useAppliances: req.useAppliances !== false,
   });
   if (!ai.apiKey) {
     trace.add("no_api_key", { reason: ai.keyError ? "保存済みのAPIキーを復号できません(SETTINGS_ENC_KEYが変わった可能性)" : "APIキーが未設定です" }, "error");
