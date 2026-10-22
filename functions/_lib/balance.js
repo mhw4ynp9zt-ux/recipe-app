@@ -5,6 +5,7 @@
 import * as M from "./kondate-messages.js";
 import { addDays } from "./meals.js";
 
+const GAUGE_METRICS = ["calories", "protein", "veg", "fat", "salt", "fiber", "carbs", "carbohydrate"];
 const AIM_BAND = 0.1; // 範囲のない「目安」は ±10% を「ちょうど良い」とする
 const round1 = (v) => Math.round(v * 10) / 10;
 
@@ -28,6 +29,31 @@ export function gaugeOf(id, total, target) {
     fill: Math.min(1, total / scaleMax), mark: Math.min(1, v / scaleMax),
     text: M.STATUS_TEXT[status],
   };
+}
+
+// ==== 週ページの「その日のバランス」 ====
+// 予定(プランの料理の合計)と食べた(食べた記録の合計)を、日ごとに返す。目標が無いときは gauges を空にする。計算はすべてコード。
+// planDays: プランの days / meals: その週の食べた記録 / effective: 目標(loadEffectiveTargets)
+const sumOf = (list) => { const t = {}; for (const n of list) for (const [k, v] of Object.entries(n || {})) t[k] = (t[k] || 0) + v; for (const k of Object.keys(t)) t[k] = round1(t[k]); return t; };
+export function buildDayBalances(weekStart, planDays, meals, effective, { showNumbers = true } = {}) {
+  const ids = GAUGE_METRICS.filter((id) => effective && effective[id]);
+  const days = {};
+  for (let i = 0; i < 7; i++) {
+    const date = addDays(weekStart, i);
+    const planned = (planDays || []).filter((d) => d.date === date && d.kind === "cook" && d.recipe);
+    const eaten = (meals || []).filter((m) => m.day === date);
+    const plannedTotals = sumOf(planned.map((d) => d.recipe.nutrition));
+    const eatenTotals = sumOf(eaten.map((m) => m.nutrition));
+    const approx = eaten.some((m) => m.approx) || planned.some((d) => d.recipe.nutritionCheck && ((d.recipe.nutritionCheck.unmatched || []).length || (d.recipe.nutritionCheck.missing || []).length));
+    days[date] = {
+      plannedCount: planned.length, eatenCount: eaten.length,
+      eatenMeals: eaten.map((m) => ({ slot: m.slot, name: m.name })),
+      approxText: approx ? M.DAY_APPROX : null,
+      gauges: (planned.length || eaten.length) ? ids.map((id) => ({ id, planned: gaugeOf(id, plannedTotals[id] || 0, effective[id]), eaten: gaugeOf(id, eatenTotals[id] || 0, effective[id]) })) : [],
+      empty: (planned.length || eaten.length) ? null : M.DAY_EMPTY,
+    };
+  }
+  return { weekStart, showNumbers, hasTargets: ids.length > 0, help: M.DAY_HELP, days };
 }
 
 // ==== 週の振り返り ====

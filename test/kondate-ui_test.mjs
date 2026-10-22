@@ -38,9 +38,21 @@ const weekStart = (d) => addDays(d, -((new Date(d + "T00:00:00Z").getUTCDay() + 
 
 // ---- 偽のサーバー ----
 function makeFakeApi({ user }) {
-  const st = { user, calls: [], aiLike: [], external: [], runCalls: 0, photoCalls: 0, meals: [], plan: null, pantry: [], targets: null, showNumbers: true, seq: 0, checked: [], quota: 12, photoQuota: 40, runSlots: [], failSlot: null };
+  const st = { user, calls: [], aiLike: [], external: [], runCalls: 0, photoCalls: 0, meals: [], plan: null, pantry: [], targets: null, showNumbers: true, seq: 0, checked: [], quota: 12, photoQuota: 40, runSlots: [], failSlot: null, eaten: new Set(), editCalls: [] };
   const json = (route, status, b) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(b) });
   const days = () => st.plan.days;
+  const gaugeP = (tot) => ({ id: "protein", status: tot >= 65 ? "ok" : "below", total: tot, text: tot >= 65 ? "ちょうど良い" : "まだ伸ばせます", target: { value: 65, kind: "min", unit: "g" }, fill: Math.min(1, tot / 100), mark: 0.6 });
+  const balanceFor = (ws) => {
+    const out = {};
+    for (let i = 0; i < 7; i++) {
+      const date = addDays(ws, i);
+      const planned = days().filter((d) => d.date === date && d.kind === "cook" && d.recipe), eaten = planned.filter((d) => st.eaten.has(d.date + ":" + d.slot));
+      const sum = (l) => l.reduce((x, d) => x + (d.recipe.nutrition.protein || 0), 0);
+      out[date] = { plannedCount: planned.length, eatenCount: eaten.length, eatenMeals: eaten.map((d) => ({ slot: d.slot, name: d.recipe.name })), approxText: null,
+        gauges: (planned.length || eaten.length) ? [{ id: "protein", planned: gaugeP(sum(planned)), eaten: gaugeP(sum(eaten)) }] : [], empty: (planned.length || eaten.length) ? null : "この日は、まだ予定も食べた記録もありません。" };
+    }
+    return { weekStart: ws, showNumbers: st.showNumbers, hasTargets: true, help: "縦の線は、1日の目安の位置です。濃い色は食べた分、薄い色は予定の分です。届かない日があっても大丈夫。栄養は週や月の平均で整います。", days: out };
+  };
   const shopping = () => {
     const items = []; for (const d of days()) if (d.recipe) d.recipe.ingredientDetails.forEach((i) => { if (!items.find((x) => x.name === i.name)) items.push({ key: i.name, name: i.name, amount: i.grams + "g", uses: [d.date], checked: st.checked.includes(i.name) }); });
     return { sections: items.length ? [{ id: "veg", label: "野菜・きのこ・海藻", items }] : [], have: [] };
@@ -69,7 +81,7 @@ function makeFakeApi({ user }) {
     let m;
     if ((m = /^\/api\/meals\/([^/]+)$/.exec(p)) && method === "DELETE") { st.meals = st.meals.filter((x) => x.id !== m[1]); return json(route, 200, { ok: true }); }
     if (p === "/api/meals/photo") { st.photoCalls++; st.photoQuota--; return json(route, 200, { approx: true, note: "写真からの推定です。量は見た目からの目安なので、料理名と量を確認して直してください", dishes: [{ name: "牛丼", nutrition: { calories: 600 }, ingredients: [{ name: "牛肉", grams: 80, matched: true }, { name: "謎のたれ", grams: 20, matched: false }] }] }); }
-    if (p === "/api/week" && method === "GET") return json(route, 200, st.plan ? { weekStart: url.searchParams.get("week"), quota: { used: 12 - st.quota, cap: 12, remaining: st.quota }, plan: { id: st.plan.id, status: "done", days: days(), pending: days().filter((d) => d.kind === "cook" && !d.recipe).map((d) => d.date + ":" + d.slot) }, summary: { cookedDays: new Set(days().filter((d) => d.recipe).map((d) => d.date)).size, cookedMeals: days().filter((d) => d.recipe).length, outingDays: new Set(days().filter((d) => d.kind === "outing").map((d) => d.date)).size, average: { calories: 600 } }, shopping: shopping() } : { weekStart: url.searchParams.get("week"), plan: null, quota: { used: 12 - st.quota, cap: 12, remaining: st.quota } });
+    if (p === "/api/week" && method === "GET") return json(route, 200, st.plan ? { weekStart: url.searchParams.get("week"), quota: { used: 12 - st.quota, cap: 12, remaining: st.quota }, plan: { id: st.plan.id, status: "done", days: days().map((d) => ({ ...d, eaten: st.eaten.has(d.date + ":" + d.slot) })), pending: days().filter((d) => d.kind === "cook" && !d.recipe).map((d) => d.date + ":" + d.slot) }, balance: balanceFor(url.searchParams.get("week")), summary: { cookedDays: new Set(days().filter((d) => d.recipe).map((d) => d.date)).size, cookedMeals: days().filter((d) => d.recipe).length, outingDays: new Set(days().filter((d) => d.kind === "outing").map((d) => d.date)).size, average: { calories: 600 } }, shopping: shopping() } : { weekStart: url.searchParams.get("week"), plan: null, quota: { used: 12 - st.quota, cap: 12, remaining: st.quota } });
     if (p === "/api/week/plan" && method === "POST") {
       const ws = body.weekStart; const slots = body.slots || ["dinner"]; const out = body.outingMeals || []; const off = body.offMeals || [];
       st.plan = { id: "wp1", days: Array.from({ length: 7 }, (_, i) => addDays(ws, i)).flatMap((date) => slots.map((slot) => { const k = date + ":" + slot; return { date, slot, kind: out.includes(k) ? "outing" : off.includes(k) ? "off" : "cook", recipe: null }; })) };
@@ -84,7 +96,18 @@ function makeFakeApi({ user }) {
     }
     if (p === "/api/week/plan/wp1" && method === "PATCH") {
       if (body.action === "check") { st.checked = body.checked ? st.checked.concat([body.key]) : st.checked.filter((k) => k !== body.key); return json(route, 200, { ok: true }); }
-      const d = days().find((x) => x.date === body.date && x.slot === (body.slot || "dinner")); if (body.action === "outing") { d.kind = "outing"; d.recipe = null; } if (body.action === "cook") { d.kind = "cook"; d.recipe = null; }
+      const slot = body.slot || "dinner"; const d = days().find((x) => x.date === body.date && x.slot === slot);
+      if (body.action === "eaten") { const k = body.date + ":" + slot; if (body.eaten) st.eaten.add(k); else st.eaten.delete(k); return json(route, 200, { ok: true, eaten: !!body.eaten }); }
+      if (body.action === "edit") {
+        st.editCalls.push(body);
+        if (!body.draft.name) return json(route, 400, { error: "入力を確認してください", fields: { name: "1〜60文字で入力してください" } });
+        const g = body.draft.ingredients.reduce((x, i) => x + i.grams, 0);
+        d.recipe = { ...d.recipe, source: "edited", edited: true, name: body.draft.name, ingredientDetails: body.draft.ingredients.map((i) => ({ name: i.name, grams: i.grams })), steps: body.draft.steps.filter(Boolean), nutrition: { calories: g * 2, protein: Math.round(g / 10) } };
+        return json(route, 200, { ok: true });
+      }
+      if (body.action === "swap") { st.eaten.has(body.date + ":" + slot); d.kind = "cook"; d.recipe = { source: "saved", name: "鮭の塩焼き", minutes: 10, ingredientDetails: [{ name: "さけ", grams: 80 }], ingredients: ["さけ 80g"], steps: ["焼く"], nutrition: { calories: 300, protein: 25 } }; return json(route, 200, { ok: true }); }
+      if (body.action === "outing" || body.action === "off") { d.kind = body.action; d.recipe = null; st.eaten.delete(body.date + ":" + slot); }
+      if (body.action === "cook") { d.kind = "cook"; d.recipe = null; st.eaten.delete(body.date + ":" + slot); }
       return json(route, 200, { ok: true });
     }
     if (p === "/api/week/plan/wp1" && method === "DELETE") { st.plan = null; return json(route, 200, { ok: true }); }
@@ -227,19 +250,64 @@ try {
   await page.waitForSelector(".k-quota[data-ai-confirm]");
   assert.equal(st.runCalls, 0);
   await page.click('.k-sheet [data-act="ok"]');
-  await page.waitForFunction(() => !document.querySelector('[data-act="run"]') && document.querySelectorAll(".k-day-name").length > 0);
+  await page.waitForFunction(() => !document.querySelector('[data-act="run"]') && document.querySelectorAll(".k-name-btn").length > 0);
   assert.equal(st.runCalls, 3); assert.deepEqual(st.runSlots, ["breakfast", "lunch", "dinner"]); ok("週: 確認で「考えてもらう」を選ぶと、AIにつながるAPIは食事ごとに1回ずつ、ちょうど3回(朝→昼→夕)");
+  const full = await page.$$eval(".k-daybtn", (els) => els.findIndex((e) => e.querySelector(".k-dots").textContent.includes("○○○")));
+  assert.ok(full >= 0); await page.locator(".k-daybtn").nth(full).click();
   const wk = await page.locator("#view-week").innerText();
-  assert.match(wk, /AIの提案/); assert.match(wk, /外食の予定/); assert.match(wk, /朝食/); assert.match(wk, /昼食/); assert.match(wk, /夕食/); ok("週: 各日に朝食・昼食・夕食の料理(AIの提案の表示)と、外食の案内が出る");
+  assert.match(wk, /AIの提案/); assert.match(wk, /朝食/); assert.match(wk, /昼食/); assert.match(wk, /夕食/); ok("週: 日付を選ぶと、その日の朝食・昼食・夕食の料理(AIの提案の表示)が出る");
+  await page.locator(".k-daybtn").nth(6).click();
+  assert.match(await page.locator("#view-week").innerText(), /外食の予定/); ok("週: 外食の食事には、外食の案内が出る");
   await noAvoid(page, "週");
   await shot(page, "week");
-  // 外食にする(AI不使用。食事ごと)
-  const outBtn = page.locator('[data-act="day"][data-do="outing"]').first();
-  const outAt = { date: await outBtn.getAttribute("data-date"), slot: await outBtn.getAttribute("data-slot") };
-  await outBtn.click();
-  await page.waitForTimeout(300);
-  const lastPatch = st.calls.filter((c) => c.method === "PATCH").pop().body;
-  assert.equal(st.runCalls, 3); assert.deepEqual({ date: lastPatch.date, slot: lastPatch.slot }, outAt); assert.equal(lastPatch.action, "outing"); ok("週: 「外食にする」はAIを使わず、押した食事(日付+食事)だけが変わる");
+  // 日付の帯・その日のバランス(予定と食べた)
+  assert.equal(await page.locator(".k-daybtn").count(), 7); assert.equal(await page.locator('.k-daybtn[aria-pressed="true"]').count(), 1); ok("週: 日付の帯(月〜日の7日)があり、1日が選ばれている");
+  const idx = await page.$$eval(".k-daybtn", (els) => els.findIndex((e) => e.querySelector(".k-dots").textContent.includes("○")));
+  assert.ok(idx >= 0); await page.locator(".k-daybtn").nth(idx).click();
+  assert.equal(await page.locator('.k-daybtn[aria-pressed="true"]').count(), 1); assert.match(await page.locator(".k-daybal").innerText(), /のバランス/);
+  assert.ok(await page.locator(".k-daybal .k-gauge").count() > 0 && await page.locator(".k-daybal .k-bar-plan").count() > 0); assert.match(await page.locator(".k-daybal").innerText(), /予定/);
+  assert.match(await page.locator(".k-daybal").innerText(), /まだ食べた記録がありません/); ok("週: 日付をタップすると、その日のバランス(予定のゲージ)が出る。食べた記録がないときは案内が出る");
+  await noAvoid(page, "週のバランス");
+  const selDate = await page.locator('.k-daybtn[aria-pressed="true"]').getAttribute("aria-label");
+  // 食べた
+  const eatBtn = page.locator('[data-act="eaten"][data-eaten="true"]').first();
+  const eatAt = { date: await eatBtn.getAttribute("data-date"), slot: await eatBtn.getAttribute("data-slot") };
+  await eatBtn.click();
+  await page.waitForFunction(() => document.querySelector('[data-act="eaten"][data-eaten="false"]'));
+  const eatPatch = st.calls.filter((c) => c.method === "PATCH").pop().body;
+  assert.deepEqual({ a: eatPatch.action, d: eatPatch.date, s: eatPatch.slot, e: eatPatch.eaten }, { a: "eaten", d: eatAt.date, s: eatAt.slot, e: true });
+  assert.match(await page.locator("#view-week").innerText(), /食べた ✓/); assert.match(await page.locator(".k-daybal").innerText(), /食べた: /);
+  assert.ok((await page.locator(".k-daybtn").nth(idx).locator(".k-dots").innerText()).includes("●")); assert.equal(st.runCalls, 3); ok("週: 「食べた」を押すと、食べた印が付き、その日のバランスと日付の帯(●)に反映される(AIは使わない)");
+  await page.locator('[data-act="eaten"][data-eaten="false"]').first().click();
+  await page.waitForFunction(() => !document.querySelector('[data-act="eaten"][data-eaten="false"]'));
+  assert.equal(st.eaten.size, 0); ok("週: 「食べた ✓(取り消す)」で取り消せる");
+  // 変更する(説明つきの選択肢)
+  await page.locator('[data-act="change"]').first().click();
+  const cs = await page.locator(".k-sheet").innerText();
+  assert.match(cs, /保存したレシピから選ぶ/); assert.match(cs, /外食にする/); assert.match(cs, /作る食事に戻す|作らない食事にする/); ok("週: 「変更する」で、保存レシピ・外食・作らない・決め直しが、説明つきで選べる");
+  await page.click('.k-choice[data-do="swap"]');
+  await page.waitForSelector(".k-pickrow"); await page.click(".k-pickrow >> nth=0");
+  await page.waitForFunction(() => document.querySelector(".k-name-btn") && [...document.querySelectorAll(".k-name-btn")].some((b) => b.textContent === "鮭の塩焼き"));
+  assert.equal(st.runCalls, 3); ok("週: 作成後でも、保存したレシピに差し替えられる(AIは使わない)");
+  await page.locator('[data-act="change"]').first().click();
+  await page.click('.k-choice[data-do="outing"]');
+  await page.waitForFunction(() => /外食の予定/.test(document.querySelector("#view-week").innerText));
+  assert.equal(st.runCalls, 3); ok("週: 作成後でも、外食に変えられる(AIは使わない)");
+  // レシピの詳細・編集・再計算
+  await page.locator('[data-act="detail"]', { hasText: "AIの野菜炒め" }).first().click();
+  const dt = await page.locator(".k-sheet").innerText();
+  assert.match(dt, /材料/); assert.match(dt, /キャベツ/); assert.match(dt, /作り方/); assert.match(dt, /炒める/); assert.match(dt, /450kcal/); ok("週: レシピをタップすると、材料・作り方・栄養の詳細が見られる");
+  await page.click('.k-sheet [data-act="edit"]');
+  await page.waitForSelector("#k-e-name");
+  await page.fill('.k-edit-row [data-f="grams"] >> nth=0', ""); await page.click('.k-sheet [data-act="save-edit"]');
+  assert.match(await page.locator("#k-e-err").innerText(), /グラム/); assert.equal(st.editCalls.length, 0); ok("週: グラムが空のままでは保存できず、サーバーにも送らない");
+  await page.fill("#k-e-name", "野菜炒め(多め)"); await page.fill('.k-edit-row [data-f="grams"] >> nth=0', "400"); await page.click('.k-sheet [data-act="save-edit"]');
+  await page.waitForFunction(() => document.querySelector(".k-detail") && /800kcal/.test(document.querySelector(".k-detail").innerText));
+  assert.equal(st.editCalls.length, 1); assert.equal(st.editCalls[0].draft.name, "野菜炒め(多め)"); assert.equal(st.editCalls[0].draft.ingredients[0].grams, 400);
+  assert.match(await page.locator(".k-detail").innerText(), /野菜炒め\(多め\)/); assert.equal(st.runCalls, 3); ok("週: 編集して保存すると、サーバーで栄養が再計算され(450→800kcal)、詳細に反映される(AIは使わない)");
+  await page.click('.k-sheet [data-act="close"]');
+  await page.waitForFunction(() => [...document.querySelectorAll(".k-tag")].some((x) => x.textContent === "編集済み")); ok("週: 編集した料理には「編集済み」の印が付く");
+  await shot(page, "week-day");
   // 買い物
   await page.click('[data-pane="shop"]');
   await page.waitForSelector(".k-shop");
@@ -274,7 +342,7 @@ try {
     assert.equal(await w.page.locator('[data-act="kind"]').count(), 7); assert.match(await w.page.locator("#view-week").innerText(), /最大1回/);
     await w.page.click('[data-act="create"]'); await w.page.waitForSelector(".k-quota[data-ai-confirm]");
     assert.match(await w.page.locator(".k-sheet").innerText(), /最大1回/);
-    await w.page.click('.k-sheet [data-act="ok"]'); await w.page.waitForSelector(".k-day-name");
+    await w.page.click('.k-sheet [data-act="ok"]'); await w.page.waitForSelector(".k-name-btn");
     assert.equal(w.api.st.runCalls, 1); assert.deepEqual(w.api.st.runSlots, ["dinner"]);
     assert.deepEqual(w.api.st.calls.find((c) => c.path === "/api/week/plan").body.slots, ["dinner"]);
     ok("週: 夕食だけ選ぶと、AIにつながるAPIはちょうど1回(夕食)");

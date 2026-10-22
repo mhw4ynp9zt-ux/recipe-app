@@ -7,6 +7,8 @@
 
 import { addDays, weekStartOf, isValidDay, todayJst } from "./meals.js";
 import { attachNutrition } from "./nutrition.js";
+import { validateDraft, buildRecipe } from "./recipe-edit.js";
+import { addMeal, findMealByKey, deleteMealByKey, updateMealByKey, cleanNutrition, KEEP_DAYS } from "./meals.js";
 import { PLAN_STAGES } from "./kondate-messages.js";
 
 export const MAX_FILL_PER_RUN = 7;
@@ -100,7 +102,32 @@ export async function createPlan(env, userId, req, now = Date.now()) {
   return { id };
 }
 
-// 日ごとの変更(外食にする・作らない日にする・また作る日にする・保存済みレシピに差し替える)。AIは呼ばない。
+// 週プランの料理を「食べた」として記録したものの目印
+export const eatenKey = (planId, date, slot) => "plan:" + planId + ":" + date + ":" + slot;
+const approxOf = (r) => !!(r && r.nutritionCheck && ((r.nutritionCheck.unmatched || []).length || (r.nutritionCheck.missing || []).length));
+
+// 「食べた」の記録/取り消し(AIは呼ばない)。同じ食事を何度押しても、記録は1件だけ。
+export async function setEaten(env, userId, plan, change, now = Date.now()) {
+  const slot = change.slot === undefined || change.slot === null ? "dinner" : change.slot;
+  if (!SLOT_ORDER.includes(slot) || typeof change.eaten !== "boolean") return { error: "リクエストが不正です", status: 400 };
+  const day = plan.days.find((d) => d.date === change.date && d.slot === slot);
+  if (!day) return { error: "その日はこの週に含まれません", status: 400 };
+  const key = eatenKey(plan.id, day.date, day.slot);
+  if (!change.eaten) { await deleteMealByKey(env, userId, key); return { eaten: false }; }
+  if (day.kind !== "cook" || !day.recipe) return { error: "まだ料理が決まっていません", status: 400 };
+  const today = todayJst(now);
+  if (day.date > addDays(today, 1)) return { error: "先の日付には記録できません", status: 400 };
+  if (day.date < addDays(today, -KEEP_DAYS)) return { error: "古い日付には記録できません", status: 400 };
+  if (await findMealByKey(env, userId, key)) return { eaten: true };
+  const nutrition = cleanNutrition(day.recipe.nutrition);
+  if (!Object.keys(nutrition).length) return { error: "この料理には栄養の値がありません", status: 422 };
+  const a = await addMeal(env, userId, { day: day.date, slot: day.slot }, { name: day.recipe.name, nutrition, approx: approxOf(day.recipe), source: "plan", recipeId: key }, now);
+  if (a.error) return { error: a.error, status: a.status };
+  return { eaten: true };
+}
+
+// 日ごとの変更(外食にする・作らない食事にする・また作る食事にする・保存済みレシピに差し替える・内容を編集する)。AIは呼ばない。
+// 食事(slot)を省くと夕食。「食べた」の記録がある食事は、変更に合わせて記録も更新する(差し替え・編集=更新 / 外食・作らない・作り直し=取り消し)。
 export async function changeDay(env, userId, plan, change, now = Date.now()) {
   const days = plan.days.map((d) => ({ ...d }));
   const slot = change.slot === undefined || change.slot === null ? "dinner" : change.slot;
@@ -110,19 +137,32 @@ export async function changeDay(env, userId, plan, change, now = Date.now()) {
   const key = slotKey(day.date, day.slot);
   const request = { ...plan.request, fill: [...(plan.request.fill || [])] };
   const unfill = () => { request.fill = request.fill.filter((x) => x !== key); };
+  const eKey = eatenKey(plan.id, day.date, day.slot);
+  let syncRecord = "none"; // none / update / delete
   if (change.action === "outing" || change.action === "off") {
-    day.kind = change.action; day.recipe = null; unfill();
+    day.kind = change.action; day.recipe = null; unfill(); syncRecord = "delete";
   } else if (change.action === "cook") {
-    day.kind = "cook"; day.recipe = null;
+    day.kind = "cook"; day.recipe = null; syncRecord = "delete";
     if (!request.fill.includes(key)) request.fill.push(key);
   } else if (change.action === "swap") {
     const row = await env.DB.prepare("SELECT data FROM recipes WHERE user_id = ? AND id = ?").bind(userId, String(change.recipeId || "")).first();
     if (!row) return { error: "レシピが見つかりません", status: 404 };
     let r; try { r = JSON.parse(row.data); } catch (e) { return { error: "レシピが読み取れません", status: 422 }; }
     if (!r.nutrition || typeof r.nutrition !== "object") return { error: "このレシピには栄養の値がありません", status: 422 };
-    day.kind = "cook"; day.recipe = snapshotRecipe(r, "saved", change.recipeId); unfill();
+    day.kind = "cook"; day.recipe = snapshotRecipe(r, "saved", change.recipeId); unfill(); syncRecord = "update";
+  } else if (change.action === "edit") {
+    // プランの中のレシピだけを直す(保存済みレシピは変えない)。栄養は成分表からコードで再計算する(AIは使わない)
+    if (day.kind !== "cook" || !day.recipe) return { error: "まだ料理が決まっていません", status: 400 };
+    const v = validateDraft(change.draft);
+    if (!v.ok) return { error: "入力を確認してください", fields: v.fields, status: 400 };
+    const built = await buildRecipe(env, v.value, day.recipe.recipeId || null);
+    built.minutes = day.recipe.minutes ?? null;
+    day.recipe = { ...snapshotRecipe(built, "edited", day.recipe.recipeId || null), edited: true };
+    syncRecord = "update";
   } else return { error: "操作が不正です", status: 400 };
   await savePlanDays(env, plan.id, userId, days, request, now);
+  if (syncRecord === "delete") await deleteMealByKey(env, userId, eKey);
+  else if (syncRecord === "update" && day.recipe) await updateMealByKey(env, userId, eKey, { name: day.recipe.name, nutrition: day.recipe.nutrition, approx: approxOf(day.recipe) });
   return { days, request };
 }
 

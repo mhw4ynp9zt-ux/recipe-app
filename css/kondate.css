@@ -3,6 +3,19 @@
 .k-head .view-title{margin:0; flex:1; text-align:center;}
 .k-nav{width:44px; height:44px; border:3px solid var(--ink); border-radius:14px; background:var(--card); color:var(--ink); font-size:22px; font-weight:700; box-shadow:3px 3px 0 var(--ink);}
 .k-nav:disabled{opacity:.35; box-shadow:none;}
+.k-gauges{display:grid; gap:12px;}
+.k-gauge-head{display:flex; justify-content:space-between; align-items:baseline; font-weight:700; margin-bottom:4px;}
+.k-gauge-text{font-size:13px; color:var(--ink-soft); font-weight:500;}
+.k-bar{position:relative; height:16px; background:var(--field); border:2px solid var(--ink); border-radius:999px; overflow:visible;}
+.k-bar-fill{height:100%; border-radius:999px; background:var(--veg-bg);}
+.k-below .k-bar-fill{background:var(--sun);}
+.k-above .k-bar-fill{background:var(--accent-soft);}
+.k-ok .k-bar-fill{background:var(--veg-bg);}
+.k-bar-mark{position:absolute; top:-5px; bottom:-5px; width:3px; background:var(--ink); border-radius:2px; transform:translateX(-1px);}
+.k-gauge-num{display:block; font-size:12.5px; color:var(--ink-faint); margin-top:3px;}
+.k-okline{font-weight:700; color:var(--veg); margin:10px 0 0;}
+.k-bar-plan{position:absolute; left:0; top:0; height:100%; border-radius:999px; background:var(--brand-soft); opacity:.9;}
+.k-bar-fill{position:relative;}
 .k-empty{margin:0;}
 .k-slot h4{margin:12px 0 4px; font-size:14px; color:var(--ink-soft);}
 .k-meal{display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px dashed var(--line);}
@@ -56,3 +69,22 @@
 .k-self summary{font-weight:700; min-height:44px; display:flex; align-items:center;}
 .k-dish{border-top:1px dashed var(--line); padding-top:8px; margin-top:8px;}
 .k-err{color:var(--danger);}
+
+/* 週ページ: 日付の帯・その日のバランス・食事カード・変更/詳細シート */
+.k-strip{display:grid; grid-template-columns:repeat(7,1fr); gap:6px; margin:12px 0;}
+.k-daybtn{display:flex; flex-direction:column; align-items:center; gap:2px; min-height:64px; padding:6px 2px; border:2px solid var(--ink); border-radius:14px; background:var(--card); color:var(--ink); font-weight:700;}
+.k-daybtn small{font-size:11px; font-weight:500; color:var(--ink-soft);}
+.k-daybtn .k-dots{font-size:11px; letter-spacing:1px; line-height:1; min-height:11px;}
+.k-daybtn[aria-pressed="true"]{background:var(--ink); color:var(--sun);} .k-daybtn[aria-pressed="true"] small{color:var(--sun);}
+.k-daybtn.k-today{box-shadow:3px 3px 0 var(--ink);}
+.k-daybal h3{margin:0 0 8px;} .k-eaten-list{margin:10px 0 0; font-size:13px; color:var(--ink-soft);}
+.k-name-btn{display:block; width:100%; text-align:left; border:0; background:transparent; padding:2px 0; font:inherit; font-weight:700; color:var(--ink); text-decoration:underline; text-underline-offset:3px; text-decoration-color:var(--line);}
+.k-eaten-tag{background:var(--veg-bg);}
+.k-choice{display:block; width:100%; text-align:left; min-height:56px; margin:8px 0; padding:10px 12px; border:2px solid var(--ink); border-radius:14px; background:var(--card); color:var(--ink); font-weight:700;}
+.k-choice small{display:block; margin-top:2px; font-weight:500; font-size:12.5px; color:var(--ink-soft);}
+.k-detail h4{margin:14px 0 4px; font-size:14px; color:var(--ink-soft);} .k-detail ul,.k-detail ol{margin:4px 0; padding-left:20px;}
+.k-nutri{display:grid; grid-template-columns:1fr 1fr; gap:2px 12px; margin:4px 0; font-size:14px;} .k-nutri span:nth-child(even){text-align:right;}
+.k-edit-row{display:grid; grid-template-columns:1fr 84px 40px; gap:6px; margin:6px 0;}
+.k-edit-row input,.k-edit input[type=text],.k-edit textarea{min-height:44px; border:2px solid var(--ink); border-radius:12px; padding:6px 10px; font:inherit; background:var(--field); color:var(--ink); width:100%; box-sizing:border-box;}
+.k-edit textarea{min-height:120px;}
+.k-edit-err{color:var(--ink); background:var(--salt-bg); border-radius:12px; padding:8px 10px; margin:8px 0;}

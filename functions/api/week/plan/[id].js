@@ -1,9 +1,11 @@
 // PATCH  /api/week/plan/:id  body: { action: "outing"|"off"|"cook"|"swap", date, recipeId? } → 日ごとの変更(AIは呼ばない)
+//        または { action: "edit", date, slot?, draft: { name, ingredients: [{name, grams, food?}], steps } } → その食事のレシピを直す(栄養は成分表からコードで再計算。保存済みレシピは変えない)
+//        または { action: "eaten", date, slot?, eaten: true|false } → 「食べた」の記録/取り消し
 //        または { action: "check", key, checked } → 買い物リストのチェック
 //        または { action: "favor", metric: "fiber"|"protein"|"veg"|null } → 作り直しのときに多めにしたい栄養(ふりかえりのヒント)
 // DELETE /api/week/plan/:id  → プランを消す
 import { getSessionUser, checkOrigin, json } from "../../../_lib/session.js";
-import { loadPlan, changeDay, isMissingTable } from "../../../_lib/week-plan.js";
+import { loadPlan, changeDay, setEaten, isMissingTable } from "../../../_lib/week-plan.js";
 
 export async function onRequestPatch({ request, env, params }) {
   const user = await getSessionUser(env, request);
@@ -28,8 +30,13 @@ export async function onRequestPatch({ request, env, params }) {
       return json({ ok: true });
     }
     if (plan.status === "running" && plan.lease_until > Date.now()) return json({ error: "いま作成中です。少し待ってからお試しください" }, { status: 409 });
+    if (body.action === "eaten") {
+      const e = await setEaten(env, user.id, plan, body);
+      if (e.error) return json({ error: e.error }, { status: e.status });
+      return json({ ok: true, eaten: e.eaten });
+    }
     const r = await changeDay(env, user.id, plan, body);
-    if (r.error) return json({ error: r.error }, { status: r.status });
+    if (r.error) return json({ error: r.error, ...(r.fields ? { fields: r.fields } : {}) }, { status: r.status });
     return json({ ok: true, days: r.days, pending: r.request.fill });
   } catch (e) {
     if (isMissingTable(e)) return json({ error: "この機能はまだ準備中です", unavailable: true }, { status: 503 });

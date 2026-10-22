@@ -36,7 +36,7 @@ export function weekStartOf(day) {
   return addDays(day, -((dow + 6) % 7));
 }
 
-function cleanNutrition(src) {
+export function cleanNutrition(src) {
   const out = {};
   if (!src || typeof src !== "object") return out;
   for (const id of METRIC_IDS) {
@@ -144,6 +144,19 @@ export async function listMeals(env, userId, from, to) {
 export async function deleteMeal(env, userId, id) {
   const r = await env.DB.prepare("DELETE FROM meal_logs WHERE user_id = ? AND id = ?").bind(userId, id).run();
   return r.meta.changes > 0;
+}
+
+// 週プランの料理を「食べた」として記録したものには、目印(recipe_id)に "plan:プランID:日付:食事" を入れる。
+// この目印で、同じ食事を二重に記録しない・取り消す・プランの変更に合わせて更新する。
+export async function findMealByKey(env, userId, key) {
+  return env.DB.prepare("SELECT id FROM meal_logs WHERE user_id = ? AND recipe_id = ?").bind(userId, key).first();
+}
+export async function deleteMealByKey(env, userId, key) {
+  await env.DB.prepare("DELETE FROM meal_logs WHERE user_id = ? AND recipe_id = ?").bind(userId, key).run();
+}
+export async function updateMealByKey(env, userId, key, { name, nutrition, approx }) {
+  await env.DB.prepare("UPDATE meal_logs SET name = ?, nutrition = ?, approx = ? WHERE user_id = ? AND recipe_id = ?")
+    .bind(String(name).slice(0, 60), JSON.stringify(cleanNutrition(nutrition)), approx ? 1 : 0, userId, key).run();
 }
 
 export function sumNutrition(meals) {

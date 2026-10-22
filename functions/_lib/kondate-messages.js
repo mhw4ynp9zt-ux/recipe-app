@@ -16,6 +16,12 @@ export const STATUS_TEXT = {
   none: "目標なし",
 };
 
+// 週ページの「その日のバランス」(予定=プランの料理の合計 / 食べた=「食べた」と記録したものの合計)
+export const DAY_HELP = "縦の線は、1日の目安の位置です。濃い色は食べた分、薄い色は予定の分です。届かない日があっても大丈夫。栄養は週や月の平均で整います。";
+export const DAY_EMPTY = "この日は、まだ予定も食べた記録もありません。";
+export const DAY_APPROX = "おおよその値を含みます";
+export const EATEN_NONE = "まだ食べた記録がありません";
+
 // 週の振り返り
 export const REVIEW_TITLE = "今週もおつかれさまでした";
 export const REVIEW_FEW = "まだ記録が少ないので、傾向はこれから見えてきます。無理のない範囲で、食べたものを足してみてください。";
