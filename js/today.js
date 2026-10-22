@@ -1,4 +1,5 @@
-// ==== 「今日」タブ:食べたものの記録・今日のバランス・次の食事のおすすめ・週の振り返り ====
+// ==== 「今日」タブ:食べたものの記録・週の振り返り ====
+// (「今日のバランス」「次の食事のおすすめ」は、週プランと週の振り返りがあるため外しました)
 // 呼ぶAPI: /api/today /api/meals /api/week/review /api/recipes(いずれもAIは呼びません)。写真からの記録は js/meal-photo.js。
 // 文言は「足りない」を避け、「まだ伸ばせます」「ちょうど良い」の言い方にそろえています(サーバー側 kondate-messages.js と同じ方針)。
 (function(){
@@ -19,39 +20,29 @@
     if(!state){ root.innerHTML = '<p class="note">読み込んでいます…</p>'; return; }
     if(state.unavailable){ K.unavailable(root); return; }
     const isToday = day === K.todayJst();
-    const b = state.balance;
+    const showNumbers = state.showNumbers !== false;
     const head = '<div class="k-head"><button type="button" class="k-nav" data-act="prev" aria-label="前の日"' + (day <= K.addDays(K.todayJst(), -34) ? ' disabled' : '') + '>‹</button>' +
-      '<h2 class="view-title">' + (isToday ? '今日' : K.esc(K.dayLabel(day))) + 'のバランス</h2>' +
+      '<h2 class="view-title">' + (isToday ? '今日' : K.esc(K.dayLabel(day))) + 'の食事</h2>' +
       '<button type="button" class="k-nav" data-act="next" aria-label="次の日"' + (isToday ? ' disabled' : '') + '>›</button></div>';
-    let gauges = '';
-    if(!state.hasTargets) gauges = '<div class="notice"><p>目標の目安を設定すると、ここにバランスが出ます。</p><button type="button" class="btn btn-small" data-act="goto-targets">目標を設定する</button></div>';
-    else if(b.empty) gauges = '<p class="note k-empty">' + K.esc(b.empty) + '</p>';
-    else gauges = '<div class="k-gauges">' + b.gauges.map((g) => K.gaugeHtml(g, b.showNumbers)).join('') + '</div>' +
-      (b.showNumbers ? '' : '<p class="k-okline">' + K.esc('バランス良好') + '</p>') +
-      (b.approxText ? '<p class="input-hint">' + K.esc(b.approxText) + '</p>' : '') + '<p class="input-hint">' + K.esc(b.help) + '</p>';
 
     const meals = K.SLOTS.map(([id, label]) => {
       const list = state.meals.filter((m) => m.slot === id);
       if(!list.length) return '';
       return '<div class="k-slot"><h4>' + label + '</h4>' + list.map((m) => '<div class="k-meal" data-id="' + K.esc(m.id) + '"><span class="k-meal-name">' + K.esc(m.name) + (m.approx ? ' <span class="k-tag">おおよそ</span>' : '') + '</span>' +
-        (b.showNumbers && m.nutrition.calories != null ? '<span class="k-meal-kcal">' + K.fmt(m.nutrition.calories) + 'kcal</span>' : '') +
+        (showNumbers && m.nutrition.calories != null ? '<span class="k-meal-kcal">' + K.fmt(m.nutrition.calories) + 'kcal</span>' : '') +
         '<button type="button" class="k-x" data-act="del" aria-label="' + K.esc(m.name) + 'の記録を消す">×</button></div>').join('') + '</div>';
     }).join('');
 
-    let next = '';
-    if(state.next) next = '<section class="panel k-next"><h3>' + K.esc(state.next.title) + '</h3>' +
-      (state.next.picks.length ? state.next.picks.map((p) => '<div class="k-pick"><span>' + K.esc(p.name) + '</span><button type="button" class="btn btn-small btn-secondary" data-act="log-pick" data-id="' + K.esc(p.recipeId) + '">食べた</button></div>').join('') : '<p class="input-hint">無理に足さなくて大丈夫です。</p>') + '</section>';
-
-    root.innerHTML = head + '<section class="panel">' + gauges + '</section>' +
+    root.innerHTML = head +
       '<section class="panel"><div class="panel-head"><h3>食べたもの</h3><button type="button" class="btn btn-small btn-primary" data-act="add">＋ 記録する</button></div>' +
-      (meals || '<p class="input-hint">まだ記録がありません。</p>') + '</section>' + next + '<div id="k-review"></div>';
+      (meals || '<p class="input-hint k-empty">まだ記録がありません。食べたものを足すと、週の振り返りに使われます。</p>') + '</section><div id="k-review"></div>';
     loadReview();
   }
 
   async function load(){
     if(!K.loggedIn()){ render(); return; }
     const r = await K.api('GET', '/api/today?day=' + day);
-    state = r.ok && r.data && r.data.balance ? r.data : (r.status === 503 ? { unavailable: true } : { meals: [], balance: { gauges: [], showNumbers: true }, hasTargets: false, error: r.data.error });
+    state = r.ok && r.data && Array.isArray(r.data.meals) ? r.data : (r.status === 503 ? { unavailable: true } : { meals: [], showNumbers: true, error: r.data.error });
     render();
   }
 
@@ -82,12 +73,6 @@
     return savedRecipes;
   }
 
-  async function post(body){
-    const r = await K.api('POST', '/api/meals', Object.assign({ day }, body));
-    if(!r.ok){ alertMsg(r.data.error || '記録できませんでした'); return false; }
-    await load();
-    return true;
-  }
   function alertMsg(msg){ const el = document.createElement('p'); el.className = 'k-toast'; el.setAttribute('role', 'status'); el.textContent = msg; document.body.appendChild(el); setTimeout(() => el.remove(), 4000); }
   K.toast = alertMsg;
 
@@ -156,8 +141,6 @@
       const r = await K.api('DELETE', '/api/meals/' + encodeURIComponent(id));
       if(r.ok) load(); else alertMsg(r.data.error || '消せませんでした');
     }
-    else if(act === 'log-pick'){ await post({ slot: slotDefault(), recipeId: a.dataset.id, portion: 1 }); }
-    else if(act === 'goto-targets'){ document.getElementById('tab-settings').click(); const t = document.getElementById('panel-targets'); if(t) t.scrollIntoView(); }
     else if(act === 'favor'){
       const w = await K.api('GET', '/api/week');
       if(w.ok && w.data.plan){

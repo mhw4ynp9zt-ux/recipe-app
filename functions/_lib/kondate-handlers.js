@@ -6,12 +6,14 @@ import * as M from "./kondate-messages.js";
 
 const GLOBAL_BUSY = "ただいま混み合っています。しばらくしてからお試しください";
 
-export async function runPlanHandler(env, user, planId, deps) {
-  const r = await runPlan(env, user.id, planId, deps);
+// opts.slot: 頼む食事(省くと、決まっていない最初の食事)。1回の呼び出しでAIに頼むのは、1つの食事だけ。
+export async function runPlanHandler(env, user, planId, deps, opts = {}) {
+  const r = await runPlan(env, user.id, planId, deps, opts);
   if (r.ok) {
     const plan = await loadPlan(env, user.id, "id", planId);
-    return { status: 200, body: { ok: true, filled: r.filled, skipped: r.skipped, status: plan.status, stage: plan.stage, progress: plan.progress } };
+    return { status: 200, body: { ok: true, filled: r.filled, skipped: r.skipped, slot: r.slot, pendingSlots: r.pendingSlots, status: plan.status, stage: plan.stage, progress: plan.progress } };
   }
+  if (r.status === 400) return { status: 400, body: { error: r.error } };
   const msg = r.error === "limit-user" ? M.PLAN_LIMIT : r.error === "limit-global" ? GLOBAL_BUSY : r.status === 404 || r.status === 409 ? r.error : M.PLAN_FAIL;
   return { status: r.status === 429 ? 429 : r.status === 404 ? 404 : r.status === 409 ? 409 : 502, body: { error: msg, limit: r.error === "limit-user" || r.error === "limit-global" } };
 }

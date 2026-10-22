@@ -1,8 +1,8 @@
-// GET /api/today?day=YYYY-MM-DD → 今日の食事の記録・バランス(ゲージ)・次の食事のおすすめ。AIは呼ばない。
+// GET /api/today?day=YYYY-MM-DD → その日の食事の記録・写真の今月の残り回数。AIは呼ばない。
+// (「今日のバランス」「次の食事のおすすめ」は、週プランと週の振り返りがあるため、画面から外した。栄養の合計と目標との比較は、週の振り返り(/api/week/review)にある)
 import { getSessionUser, json } from "../_lib/session.js";
-import { listMeals, sumNutrition, isValidDay, isMissingTable, todayJst } from "../_lib/meals.js";
+import { listMeals, isValidDay, isMissingTable, todayJst } from "../_lib/meals.js";
 import { loadEffectiveTargets } from "../_lib/targets.js";
-import { buildBalance, suggestNext } from "../_lib/balance.js";
 import { usedMonthly, MONTHLY_CAPS } from "../_lib/kondate-usage.js";
 
 export async function onRequestGet({ request, env }) {
@@ -12,19 +12,10 @@ export async function onRequestGet({ request, env }) {
   if (!isValidDay(day)) return json({ error: "日付が不正です" }, { status: 400 });
   try {
     const meals = await listMeals(env, user.id, day, day);
-    const { totals, approx } = sumNutrition(meals);
-    const { stored, built } = await loadEffectiveTargets(env, user.id);
-    const effective = built ? built.effective : {};
-    const balance = buildBalance(totals, effective, { hasMeals: meals.length > 0, approx, showNumbers: stored.showNumbers });
-    let next = null;
-    if (meals.length && balance.gauges.length) {
-      const { results } = await env.DB.prepare("SELECT data FROM recipes WHERE user_id = ?").bind(user.id).all();
-      const recipes = results.map((r) => { try { return JSON.parse(r.data); } catch (e) { return null; } }).filter(Boolean);
-      next = suggestNext(balance.gauges, recipes);
-    }
+    const { stored } = await loadEffectiveTargets(env, user.id); // 「数字を隠す」設定だけ使う
     const photoUsed = await usedMonthly(env, user.id, "photo");
     const quota = { photo: { used: photoUsed, cap: MONTHLY_CAPS.photo, remaining: Math.max(0, MONTHLY_CAPS.photo - photoUsed) } };
-    return json({ day, meals, balance, next, quota, hasTargets: !!built && Object.keys(effective).length > 0 }, { headers: { "Cache-Control": "no-store" } });
+    return json({ day, meals, showNumbers: stored.showNumbers !== false, quota }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     if (isMissingTable(e)) return json({ error: "この機能はまだ準備中です", unavailable: true }, { status: 503 });
     throw e;

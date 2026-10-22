@@ -8,21 +8,13 @@ export const AVOID_WORDS = ["不足", "足りない", "足りません", "足り
 const LABEL = { calories: "カロリー", protein: "たんぱく質", veg: "野菜", fat: "脂質", salt: "塩分", fiber: "食物繊維", carbs: "糖質", carbohydrate: "炭水化物" };
 export const metricLabel = (id) => LABEL[id] || id;
 
-// 今日のバランスの状態ごとの短い言葉(ゲージの横に出す)
+// 栄養の状態ごとの短い言葉(週の振り返りの判定で使う)
 export const STATUS_TEXT = {
   ok: "ちょうど良い",
   below: "まだ伸ばせます",
   above: "やや多めです",
   none: "目標なし",
 };
-
-// 次の食事のおすすめの見出し
-export const nextMealTitle = (hasPick) => (hasPick ? "次の食事で、ちょうど整います" : "今日はここまでで十分です");
-
-export const GAUGE_HELP = "縦の線は、1日の目安の位置です。届かない日があっても大丈夫。栄養は週や月の平均で整います。";
-export const NUMBERS_OFF_TEXT = "バランス良好";
-export const NO_RECORD_TEXT = "まだ記録がありません。食べたものを足すと、ここにバランスが出ます。";
-export const APPROX_TEXT = "おおよその値を含みます";
 
 // 週の振り返り
 export const REVIEW_TITLE = "今週もおつかれさまでした";

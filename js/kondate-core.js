@@ -34,18 +34,6 @@
   K.SLOTS = [['breakfast', '朝'], ['lunch', '昼'], ['dinner', '夜'], ['snack', '間食']];
   K.fmt = (v) => (Math.round(Number(v) * 10) / 10).toLocaleString('ja-JP');
 
-  // ゲージ。数字を隠す設定のときは、バーと言葉だけにする。「あと◯g」のような差の数字は出さない。
-  K.gaugeHtml = function(g, showNumbers){
-    const id = g.id;
-    const num = showNumbers && g.target
-      ? '<span class="k-gauge-num">' + K.fmt(g.total) + ' / 目安 ' + K.fmt(g.target.value) + K.unit(id) + (g.target.kind === 'min' ? ' 以上' : g.target.kind === 'max' ? ' 未満' : '') + '</span>'
-      : '';
-    return '<div class="k-gauge k-' + K.esc(g.status) + '" data-metric="' + K.esc(id) + '">' +
-      '<div class="k-gauge-head"><span class="k-gauge-label">' + K.esc(K.LABEL[id] || id) + '</span><span class="k-gauge-text">' + K.esc(g.text || '') + '</span></div>' +
-      '<div class="k-bar" role="img" aria-label="' + K.esc((K.LABEL[id] || id) + ' ' + (g.text || '')) + '"><div class="k-bar-fill" style="width:' + Math.round((g.fill || 0) * 100) + '%"></div>' +
-      '<div class="k-bar-mark" style="left:' + Math.round((g.mark || 0) * 100) + '%"></div></div>' + num + '</div>';
-  };
-
   // AIを使う前の確認。今月の残り回数を見せて、「使う」をタップしたときだけ true を返す(閉じる・やめるは false)。
   K.confirmAi = function({ title, body, remaining, cap, unit, okLabel }){
     return new Promise((resolve) => {

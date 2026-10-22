@@ -3,17 +3,6 @@
 .k-head .view-title{margin:0; flex:1; text-align:center;}
 .k-nav{width:44px; height:44px; border:3px solid var(--ink); border-radius:14px; background:var(--card); color:var(--ink); font-size:22px; font-weight:700; box-shadow:3px 3px 0 var(--ink);}
 .k-nav:disabled{opacity:.35; box-shadow:none;}
-.k-gauges{display:grid; gap:12px;}
-.k-gauge-head{display:flex; justify-content:space-between; align-items:baseline; font-weight:700; margin-bottom:4px;}
-.k-gauge-text{font-size:13px; color:var(--ink-soft); font-weight:500;}
-.k-bar{position:relative; height:16px; background:var(--field); border:2px solid var(--ink); border-radius:999px; overflow:visible;}
-.k-bar-fill{height:100%; border-radius:999px; background:var(--veg-bg);}
-.k-below .k-bar-fill{background:var(--sun);}
-.k-above .k-bar-fill{background:var(--accent-soft);}
-.k-ok .k-bar-fill{background:var(--veg-bg);}
-.k-bar-mark{position:absolute; top:-5px; bottom:-5px; width:3px; background:var(--ink); border-radius:2px; transform:translateX(-1px);}
-.k-gauge-num{display:block; font-size:12.5px; color:var(--ink-faint); margin-top:3px;}
-.k-okline{font-weight:700; color:var(--veg); margin:10px 0 0;}
 .k-empty{margin:0;}
 .k-slot h4{margin:12px 0 4px; font-size:14px; color:var(--ink-soft);}
 .k-meal{display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px dashed var(--line);}
@@ -21,7 +10,6 @@
 .k-meal-kcal{font-size:13px; color:var(--ink-faint); white-space:nowrap;}
 .k-x{border:0; background:transparent; color:var(--ink-faint); font-size:20px; min-width:40px; min-height:40px; line-height:1; border-radius:12px;}
 .k-tag{display:inline-block; font-size:11px; font-weight:700; padding:1px 8px; border-radius:999px; background:var(--brand-soft); border:1.5px solid var(--ink); color:var(--ink); vertical-align:middle;}
-.k-pick{display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 0;}
 .k-positives{margin:6px 0 10px; padding-left:20px;}
 .k-hint{background:var(--field); border:2px dashed var(--line); border-radius:var(--radius-sm); padding:10px 12px; margin:8px 0;}
 .k-sheet-wrap{position:fixed; inset:0; z-index:100; background:rgba(59,47,42,.45); display:flex; align-items:flex-end; justify-content:center;}
@@ -48,6 +36,14 @@
 .k-day-name{font-weight:700; margin:2px 0;} .k-day-meta,.k-day-note{margin:2px 0; font-size:13px; color:var(--ink-soft);}
 .k-day-actions{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;}
 .k-ai-box{margin:10px 0;} .k-ai-box .btn{width:100%;}
+.k-meal-row{border-top:2px dashed var(--line); padding:8px 0 2px; margin-top:8px;} .k-day h4 + .k-meal-row{border-top:0; margin-top:0;}
+.k-meal-row.k-kind-outing{background:var(--salt-bg); border-radius:var(--radius-sm); padding:8px 10px;} .k-meal-row.k-kind-off{background:transparent;}
+.k-slot-name{margin:0 0 2px; font-size:13px; font-weight:700; color:var(--ink-soft);}
+.k-slotpick{display:flex; gap:6px; margin:8px 0 4px;}
+.k-slotbtn{flex:1; min-height:44px; border:2px solid var(--ink); border-radius:14px; background:var(--card); color:var(--ink); font-weight:700;}
+.k-slotbtn[aria-pressed="true"]{background:var(--ink); color:var(--sun);}
+.k-draft-meals{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;}
+.k-draft-meals .k-kind{min-width:84px;}
 .k-summary{background:var(--field); border-radius:var(--radius-sm); padding:8px 12px;} .k-summary p{margin:4px 0;}
 .k-draft{display:grid; gap:6px; margin:10px 0 14px;}
 .k-draft-day{display:flex; justify-content:space-between; align-items:center; gap:8px;}
