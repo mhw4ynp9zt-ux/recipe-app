@@ -25,7 +25,8 @@
     "test:optional-targets": "node test/optional-targets-ui_test.mjs",
     "test:media": "node test/media-api_test.mjs && node test/recipe-import_test.mjs && node test/no-ai-cost_test.mjs",
     "test:carbohydrate": "node test/carbohydrate_test.mjs",
-    "test:media-ui": "node test/photo-share-import-ui_test.mjs"
+    "test:media-ui": "node test/photo-share-import-ui_test.mjs",
+    "test:kondate": "node test/targets_test.mjs && node test/meals_test.mjs && node test/balance_test.mjs && node test/kondate-plan_test.mjs && node test/kondate-tone_test.mjs && node test/kondate-no-ai-cost_test.mjs && node test/kondate-ui_test.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.0"

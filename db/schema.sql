@@ -76,3 +76,53 @@ CREATE TABLE IF NOT EXISTS recipe_shares (
   FOREIGN KEY (user_id, recipe_id) REFERENCES recipes(user_id, id) ON DELETE CASCADE
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_recipe_shares_recipe ON recipe_shares(user_id, recipe_id);
+
+-- ==== 目標の目安・食事記録・週プラン用テーブル(db/migration-011-kondate.sql と同じ内容。初回構築用) ====
+CREATE TABLE IF NOT EXISTS user_targets (
+  user_id     TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  data        TEXT NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_pantry (
+  user_id     TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  items       TEXT NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meal_logs (
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  day         TEXT NOT NULL,
+  slot        TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  nutrition   TEXT NOT NULL,
+  approx      INTEGER NOT NULL DEFAULT 0,
+  source      TEXT NOT NULL,
+  recipe_id   TEXT,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_meal_logs_user_day ON meal_logs(user_id, day);
+CREATE TABLE IF NOT EXISTS week_plans (
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  week_start  TEXT NOT NULL,
+  status      TEXT NOT NULL,
+  stage       TEXT NOT NULL DEFAULT 'queued',
+  progress    INTEGER NOT NULL DEFAULT 0,
+  days        TEXT NOT NULL,
+  request     TEXT,
+  shopping    TEXT,
+  usage_day   TEXT,
+  ai_calls    INTEGER NOT NULL DEFAULT 0,
+  lease_until INTEGER NOT NULL DEFAULT 0,
+  error       TEXT,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_week_plans_user_week ON week_plans(user_id, week_start);
+CREATE TABLE IF NOT EXISTS ai_usage_user (
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  month       TEXT NOT NULL,
+  kind        TEXT NOT NULL,
+  used        INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, month, kind)
+);

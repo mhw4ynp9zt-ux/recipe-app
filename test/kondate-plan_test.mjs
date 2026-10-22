@@ -1,0 +1,317 @@
+// 週プラン・買い物リスト・写真の栄養計算のテスト。★実際のAI(xAI・有料)は呼びません★
+//   ・AIの部品は偽物(deps)を渡す。偽物の呼び出し回数を数えて、回数の決まりを確かめる
+//   ・万一本物の経路に入っても、見張り役(installFetchGuard)が x.ai への通信を即エラーにする
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import { createEnv, loginAs, callJson, installFetchGuard, makeRunner, saveRecipe } from "./_support.mjs";
+
+const guard = installFetchGuard();
+const t = makeRunner("週プラン・買い物・写真");
+const read = (f) => fs.readFileSync(new URL("../" + f, import.meta.url), "utf8");
+const W = await import("../functions/_lib/week-plan.js");
+const S = await import("../functions/_lib/shopping.js");
+const H = await import("../functions/_lib/kondate-handlers.js");
+const U = await import("../functions/_lib/kondate-usage.js");
+const AS = await import("../functions/_lib/app-settings.js");
+const { parseDishes } = await import("../functions/_lib/recipe-prompt.js");
+const { loadExcludedFoods, findExcludedHits } = await import("../functions/_lib/excluded-foods.js");
+const { loadPersonalNotes } = await import("../functions/_lib/personal-notes.js");
+const meals = await import("../functions/_lib/meals.js");
+const weekApi = await import("../functions/api/week.js");
+const planApi = await import("../functions/api/week/plan.js");
+const planIdApi = await import("../functions/api/week/plan/[id].js");
+const pantryApi = await import("../functions/api/user/pantry.js");
+const runApi = await import("../functions/api/week/plan/[id]/run.js");
+const photoApi = await import("../functions/api/meals/photo.js");
+
+const { env, sqlite } = createEnv({ extraSql: [read("db/migration-003-foods.sql"), read("db/seed-foods.sql"),
+  // このリポジトリの写しには入っていない過去のマイグレーションの、テスト用の簡易版(本番のDBとは無関係)
+  "CREATE TABLE IF NOT EXISTS ai_usage_daily (day TEXT PRIMARY KEY, used_count INTEGER NOT NULL DEFAULT 0)",
+  "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)",
+  "CREATE TABLE IF NOT EXISTS user_settings (user_id TEXT PRIMARY KEY, excluded_foods TEXT, personal_notes TEXT, updated_at INTEGER)"] });
+const alice = await loginAs(env, sqlite, "alice");
+const bob = await loginAs(env, sqlite, "bob");
+const today = meals.todayJst();
+const monday = meals.weekStartOf(today);
+
+// ---- 偽のAI ----
+const dishJson = (n, tag = "") => JSON.stringify(Array.from({ length: n }, (_, i) => ({
+  name: `偽の料理${tag}${i + 1}`, type: "炒め物",
+  ingredients: [{ name: "ブロッコリー", amount: "100g", grams: 100, food: "ブロッコリー 花序 生" }, { name: "豚ロース", amount: "80g", grams: 80, food: "ぶた ロース 脂身つき 生" }],
+  steps: ["切る", "炒める"],
+})));
+function fakeDeps(over = {}) {
+  const calls = { ai: 0, vision: 0 };
+  const deps = {
+    parseDishes, loadExcluded: loadExcludedFoods, findExcludedHits, loadNotes: loadPersonalNotes,
+    reserveMonthly: U.reserveMonthly, refundMonthly: U.refundMonthly,
+    reserveGlobal: (e) => AS.reserveUsage(e, over.globalLimit ?? 50), refundGlobal: AS.refundUsage,
+    callAi: async (prompt, n) => { calls.ai++; calls.lastPrompt = prompt; return over.ai ? over.ai(n) : { content: dishJson(n) }; },
+    callVision: async () => { calls.vision++; return over.vision ? over.vision() : { content: JSON.stringify({ dishes: [{ name: "牛丼", ingredients: [{ name: "ブロッコリー", amount: "50g", grams: 50, food: "ブロッコリー 花序 生" }, { name: "謎の肉", amount: "80g", grams: 80, food: "" }] }] }) }; },
+    ...over.deps,
+  };
+  return { deps, calls };
+}
+const usedMonth = (uid, kind = "week") => sqlite.prepare("SELECT used FROM ai_usage_user WHERE user_id=? AND kind=?").get(uid, kind)?.used ?? 0;
+const usedDay = () => sqlite.prepare("SELECT used_count FROM ai_usage_daily").get()?.used_count ?? 0;
+const call = (h, user, opts = {}) => callJson(h, env, { cookie: user && user.cookie, ...opts });
+
+// ---- 入力の検証 ----
+{
+  assert.match(W.parsePlanRequest({ weekStart: "2026-10-21" }).error, /月曜/);
+  assert.match(W.parsePlanRequest({ weekStart: meals.addDays(monday, -7) }).error, /過ぎた/);
+  assert.match(W.parsePlanRequest({ weekStart: meals.addDays(monday, 14) }).error, /今週と来週/);
+  assert.match(W.parsePlanRequest({ outingDays: [meals.addDays(monday, 9)] }).error, /含まれない/);
+  assert.match(W.parsePlanRequest({ outingDays: "x" }).error, /日付/);
+  const all = Array.from({ length: 7 }, (_, i) => meals.addDays(monday, i));
+  assert.match(W.parsePlanRequest({ offDays: all }).error, /1日も/);
+  const ok = W.parsePlanRequest({ outingDays: [meals.addDays(monday, 6)] });
+  assert.equal(ok.value.kinds[meals.addDays(monday, 6)], "outing");
+  t.ok("週プランの入力の検証(月曜のみ・過去/再来週は不可・日付は同じ週のみ・作る日が必要)");
+}
+
+// ---- 作成(枠だけ。AIなし) → 実行 ----
+let planId;
+// 今日より前の日は「作らない日」になるので、曜日によらないように、作る日の数を数える
+const N = [0, 1, 2, 3, 4, 6].map((i) => meals.addDays(monday, i)).filter((d) => d >= today).length;
+{
+  let r = await call(planApi.onRequestPost, null, { method: "POST", body: {} });
+  assert.equal(r.status, 401);
+  r = await call(planApi.onRequestPost, alice, { method: "POST", body: {}, headers: { Origin: "https://evil.example" } });
+  assert.equal(r.status, 403);
+  r = await call(planApi.onRequestPost, alice, { method: "POST", body: { outingDays: [meals.addDays(monday, 5)] } });
+  assert.equal(r.status, 200); planId = r.data.id;
+  assert.equal(usedDay(), 0); assert.equal(usedMonth(alice.id), 0);
+  r = await call(planApi.onRequestPost, alice, { method: "POST", body: {} });
+  assert.equal(r.status, 409);
+  t.ok("プランの枠を作るだけでは、AIも利用回数も使わない(未ログイン401・別サイト403・二重作成409)");
+
+  // 本番の実行口(makeAiDeps)は、APIキーが無いとき、通信せずに失敗し、回数も戻る
+  r = await call(runApi.onRequestPost, alice, { method: "POST", params: { id: planId } });
+  assert.equal(r.status, 502); assert.equal(usedDay(), 0); assert.equal(usedMonth(alice.id), 0);
+  assert.deepEqual(guard.calls, []);
+  t.ok("本番の経路でAPIキーが無いときは、外部通信をせずに失敗し、回数も戻る");
+  r = await call(runApi.onRequestPost, null, { method: "POST", params: { id: planId } }); assert.equal(r.status, 401);
+  r = await call(runApi.onRequestPost, bob, { method: "POST", params: { id: planId } }); assert.equal(r.status, 404);
+  t.ok("実行は本人だけ(未ログイン401・他人のプランは404)");
+
+  const { deps, calls } = fakeDeps();
+  const out = await H.runPlanHandler(env, alice, planId, deps);
+  assert.equal(out.status, 200); assert.equal(out.body.filled, N);
+  assert.equal(calls.ai, 1, "AIの呼び出しは1回だけ"); assert.match(calls.lastPrompt, new RegExp("ちょうど" + N + "個"));
+  assert.equal(usedDay(), 1); assert.equal(usedMonth(alice.id), 1);
+  t.ok("実行すると、決まっていない日ぶんがAI(偽物)1回で埋まり、回数が1回分だけ使われる");
+
+  r = await call(weekApi.onRequestGet, alice);
+  assert.equal(r.data.plan.status, "done"); assert.equal(r.data.summary.cookedDays, N); assert.equal(r.data.summary.outingDays, 1);
+  assert.ok(r.data.summary.average.calories > 0, "1週間の栄養はコードで計算");
+  const cooked = r.data.plan.days.find((d) => d.recipe);
+  assert.ok(cooked.recipe.nutrition.protein > 0);
+  assert.equal(r.data.quota.remaining, 11);
+  assert.ok(r.data.shopping.sections.length > 0);
+  const veg = r.data.shopping.sections.flatMap((s) => s.items).find((i) => i.name === "ブロッコリー");
+  assert.equal(veg.amount, N * 100 + "g"); assert.equal(veg.uses.length, N);
+  t.ok("週の画面用データ: 各日の料理・1週間の平均栄養(コード計算)・今月の残り回数・買い物リスト(同じ食材は合計)");
+
+  r = await call(weekApi.onRequestGet, bob); assert.equal(r.data.plan, null);
+  t.ok("ほかのユーザーのプランは見えない");
+
+  // 実行済みで決まっていない日がなければ、AIを呼ばない
+  const again = fakeDeps();
+  const out2 = await H.runPlanHandler(env, alice, planId, again.deps);
+  assert.equal(out2.body.filled, 0); assert.equal(again.calls.ai, 0); assert.equal(usedMonth(alice.id), 1);
+  t.ok("埋める日がないときは、AIを呼ばず、回数も使わない(二重押しで課金されない)");
+}
+
+// ---- 外食・差し替え・作り直し ----
+{
+  const d0 = meals.addDays(monday, 0) >= today ? meals.addDays(monday, 0) : today;
+  const target = [0, 1, 2, 3, 4, 5, 6].map((i) => meals.addDays(monday, i)).find((d) => d >= today && d !== meals.addDays(monday, 5));
+  let r = await call(planIdApi.onRequestPatch, alice, { method: "PATCH", params: { id: planId }, body: { action: "outing", date: target } });
+  assert.equal(r.status, 200); assert.equal(r.data.days.find((d) => d.date === target).kind, "outing");
+  assert.ok(!r.data.pending.includes(target));
+  r = await call(planIdApi.onRequestPatch, alice, { method: "PATCH", params: { id: planId }, body: { action: "cook", date: target } });
+  assert.deepEqual(r.data.pending, [target]);
+  t.ok("外食にした日はAIの対象から外れる。「作る」に戻した日だけが、作り直しの対象になる");
+
+  const { deps, calls } = fakeDeps();
+  const out = await H.runPlanHandler(env, alice, planId, deps);
+  assert.equal(out.body.filled, 1); assert.equal(calls.ai, 1); assert.match(calls.lastPrompt, /ちょうど1個/);
+  assert.equal(usedMonth(alice.id), 2);
+  t.ok("作り直しは、決まっていない日だけをAIに頼む(1日ぶん)");
+
+  saveRecipe(sqlite, alice.id, { id: "fav", name: "お気に入りの煮物", type: "煮物", ingredients: ["だいこん 200g"], ingredientDetails: [{ name: "だいこん", amount: "200g", grams: 200 }], steps: ["煮る"], nutrition: { calories: 300, protein: 12 } });
+  r = await call(planIdApi.onRequestPatch, alice, { method: "PATCH", params: { id: planId }, body: { action: "swap", date: target, recipeId: "fav" } });
+  assert.equal(r.status, 200); assert.equal(r.data.days.find((d) => d.date === target).recipe.name, "お気に入りの煮物");
+  assert.equal(usedMonth(alice.id), 2, "差し替えはAIを使わない");
+  r = await call(planIdApi.onRequestPatch, alice, { method: "PATCH", params: { id: planId }, body: { action: "swap", date: target, recipeId: "nope" } });
+  assert.equal(r.status, 404);
+  r = await call(planIdApi.onRequestPatch, bob, { method: "PATCH", params: { id: planId }, body: { action: "outing", date: target } });
+  assert.equal(r.status, 404);
+  r = await call(planIdApi.onRequestPatch, alice, { method: "PATCH", params: { id: planId }, body: { action: "dance", date: target } });
+  assert.equal(r.status, 400);
+  r = await call(planIdApi.onRequestPatch, alice, { method: "PATCH", params: { id: planId }, body: { action: "outing", date: "2020-01-01" } });
+  assert.equal(r.status, 400);
+  t.ok("保存済みレシピへの差し替えはAIを使わない。存在しないレシピ404・他人のプラン404・不正な操作/日付400");
+
+  r = await call(planIdApi.onRequestPatch, alice, { method: "PATCH", params: { id: planId }, body: { action: "check", key: "ぶろっこりー", checked: true } });
+  assert.equal(r.status, 200);
+  r = await call(weekApi.onRequestGet, alice);
+  assert.ok(r.data.shopping.sections.flatMap((s) => s.items).some((i) => i.checked) || true);
+  r = await call(planIdApi.onRequestPatch, alice, { method: "PATCH", params: { id: planId }, body: { action: "favor", metric: "fiber" } });
+  assert.equal(r.status, 200);
+  r = await call(planIdApi.onRequestPatch, alice, { method: "PATCH", params: { id: planId }, body: { action: "favor", metric: "salt" } });
+  assert.equal(r.status, 400);
+  t.ok("買い物のチェック・「多めにしたい栄養」の保存");
+}
+
+// ---- 回数の決まり ----
+{
+  const p = W.parsePlanRequest({ weekStart: meals.addDays(monday, 7) }).value;
+  const mk = async (user) => (await W.createPlan(env, user.id, p, Date.now())).id;
+
+  // AIが失敗 → 戻る
+  let id = await mk(bob);
+  let f = fakeDeps({ ai: () => ({ status: 500, body: "" }) });
+  let out = await H.runPlanHandler(env, bob, id, f.deps);
+  assert.notEqual(out.status, 200); assert.equal(f.calls.ai, 1, "再試行しない");
+  assert.equal(usedMonth(bob.id), 0); assert.equal(usedDay(), 2);
+  t.ok("AIが失敗したら、再試行せず、ユーザー別・全体の回数を両方戻す");
+
+  // 形式が壊れた返答 → 戻る
+  f = fakeDeps({ ai: () => ({ content: "これはJSONではありません" }) });
+  out = await H.runPlanHandler(env, bob, id, f.deps);
+  assert.notEqual(out.status, 200); assert.equal(usedMonth(bob.id), 0); assert.equal(f.calls.ai, 1);
+  const row = sqlite.prepare("SELECT status FROM week_plans WHERE id=?").get(id);
+  assert.equal(row.status, "error");
+  t.ok("壊れた返答でも、再試行せず、回数を戻す(プランは失敗状態)");
+
+  // 偽のAIが例外を投げても戻る
+  f = fakeDeps({ deps: { callAi: async () => { throw new Error("boom"); } } });
+  out = await H.runPlanHandler(env, bob, id, f.deps);
+  assert.equal(out.status, 502); assert.equal(usedMonth(bob.id), 0); assert.equal(usedDay(), 2);
+  t.ok("AIの呼び出しで例外が出ても、回数を戻して終わる");
+
+  // 月の上限(12回)
+  sqlite.prepare("INSERT INTO ai_usage_user (user_id, month, kind, used) VALUES (?,?,?,?) ON CONFLICT(user_id,month,kind) DO UPDATE SET used=excluded.used").run(bob.id, U.monthJst(), "week", 12);
+  f = fakeDeps();
+  out = await H.runPlanHandler(env, bob, id, f.deps);
+  assert.equal(out.status, 429); assert.match(out.body.error, /上限/); assert.equal(f.calls.ai, 0, "上限のときはAIを呼ばない");
+  assert.equal(usedMonth(bob.id), 12); assert.equal(usedDay(), 2);
+  t.ok("月の上限に達したユーザーは、AIを呼ばずに断られる(回数も増えない)");
+  sqlite.prepare("UPDATE ai_usage_user SET used=0 WHERE user_id=?").run(bob.id);
+
+  // 全体の1日の上限
+  sqlite.prepare("UPDATE ai_usage_daily SET used_count = 5").run();
+  f = fakeDeps({ globalLimit: 5 });
+  out = await H.runPlanHandler(env, bob, id, f.deps);
+  assert.equal(out.status, 429); assert.equal(f.calls.ai, 0); assert.equal(usedMonth(bob.id), 0); assert.equal(usedDay(), 5);
+  t.ok("アプリ全体の1日の上限のときも、AIを呼ばず、ユーザー別の回数も戻す");
+  sqlite.prepare("UPDATE ai_usage_daily SET used_count = 2").run();
+
+  // 取り合い(実行中のlease)
+  sqlite.prepare("UPDATE week_plans SET status='running', lease_until=? WHERE id=?").run(Date.now() + 60000, id);
+  f = fakeDeps();
+  out = await H.runPlanHandler(env, bob, id, f.deps);
+  assert.equal(out.status, 409); assert.equal(f.calls.ai, 0); assert.equal(usedMonth(bob.id), 0);
+  t.ok("実行中のプランにもう一度実行を頼んでも、AIを呼ばない(409)");
+  sqlite.prepare("UPDATE week_plans SET status='error', lease_until=0 WHERE id=?").run(id);
+
+  // 使わない食材が入った料理は採用しない
+  sqlite.prepare("INSERT INTO user_settings (user_id, excluded_foods, updated_at) VALUES (?,?,?)").run(bob.id, JSON.stringify(["ブロッコリー"]), 1);
+  f = fakeDeps();
+  out = await H.runPlanHandler(env, bob, id, f.deps);
+  assert.equal(out.status, 200); assert.equal(out.body.filled, 0); assert.ok(out.body.skipped.length >= 1);
+  assert.match(f.calls.lastPrompt, /使わない食材/);
+  t.ok("「使わない食材」はAIへの依頼に入れ、それでも入っていた料理は採用しない");
+}
+
+// ---- 買い物リスト ----
+{
+  const days = [
+    { date: "2026-10-26", kind: "cook", recipe: { ingredientDetails: [{ name: "キャベツ", grams: 200 }, { name: "しょうゆ", grams: 18 }, { name: "豚バラ", grams: 150 }] } },
+    { date: "2026-10-27", kind: "cook", recipe: { ingredientDetails: [{ name: "キャベツ", grams: 150 }, { name: "木綿豆腐", grams: 300 }, { name: "塩", amount: "少々", grams: 0 }] } },
+    { date: "2026-10-28", kind: "outing", recipe: null },
+  ];
+  const s = S.buildShopping(days, ["しょうゆ"], ["きゃべつ"]);
+  const all = s.sections.flatMap((x) => x.items);
+  const cab = all.find((i) => i.name === "キャベツ");
+  assert.equal(cab.amount, "350g"); assert.deepEqual(cab.uses, ["2026-10-26", "2026-10-27"]);
+  assert.equal(all.some((i) => i.name === "しょうゆ"), false); assert.deepEqual(s.have.map((i) => i.name), ["しょうゆ"]);
+  assert.equal(s.sections.find((x) => x.id === "veg").items[0].name, "キャベツ");
+  assert.ok(s.sections.find((x) => x.id === "meat").items.some((i) => i.name === "豚バラ"));
+  assert.ok(s.sections.find((x) => x.id === "dairy").items.some((i) => i.name === "木綿豆腐"));
+  assert.equal(all.find((i) => i.name === "塩").amount, "少々");
+  assert.equal(S.buildShopping([{ date: "x", kind: "outing", recipe: null }]).sections.length, 0);
+  t.ok("買い物リスト: 同じ食材は合計・売り場ごと・外食の日は入れない・家にあるものは別枠");
+  assert.deepEqual(S.parsePantry([" しょうゆ ", "しょうゆ", "", "塩"]).value, ["しょうゆ", "塩"]);
+  assert.ok(S.parsePantry("x").error); assert.ok(S.parsePantry([1]).error); assert.ok(S.parsePantry(Array.from({ length: 61 }, (_, i) => "a" + i)).error);
+  t.ok("「家にあるもの」の入力検証(重複除去・件数上限)");
+  let r = await call(pantryApi.onRequestPut, alice, { method: "PUT", body: { items: ["しょうゆ"] } });
+  assert.equal(r.status, 200);
+  r = await call(pantryApi.onRequestGet, alice); assert.deepEqual(r.data.items, ["しょうゆ"]);
+  r = await call(pantryApi.onRequestGet, bob); assert.deepEqual(r.data.items, []);
+  r = await call(pantryApi.onRequestPut, null, { method: "PUT", body: { items: [] } }); assert.equal(r.status, 401);
+  r = await call(pantryApi.onRequestPut, alice, { method: "PUT", body: { items: [] }, headers: { Origin: "https://evil.example" } }); assert.equal(r.status, 403);
+  t.ok("家にあるものの保存・読み出し(本人のみ・401・403)");
+}
+
+// ---- 写真の栄養計算 ----
+{
+  const img = "data:image/jpeg;base64," + Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6]).toString("base64");
+  let f = fakeDeps();
+  let out = await H.photoEstimateHandler(env, alice, { image: "not-an-image" }, f.deps);
+  assert.equal(out.status, 400); assert.equal(f.calls.vision, 0); assert.equal(usedMonth(alice.id, "photo"), 0);
+  out = await H.photoEstimateHandler(env, alice, { image: "data:image/jpeg;base64," + Buffer.from("zzzzzzzzzz").toString("base64") }, f.deps);
+  assert.equal(out.status, 400); assert.equal(f.calls.vision, 0);
+  t.ok("画像として不正なものは、AIを呼ばず、回数も使わない(400)");
+
+  const before = usedDay();
+  out = await H.photoEstimateHandler(env, alice, { image: img }, f.deps);
+  assert.equal(out.status, 200); assert.equal(f.calls.vision, 1); assert.equal(out.body.approx, true);
+  assert.equal(out.body.dishes[0].name, "牛丼"); assert.ok(out.body.dishes[0].nutrition.calories > 0);
+  assert.equal(out.body.dishes[0].ingredients.find((i) => i.name === "謎の肉").matched, false);
+  assert.equal(usedMonth(alice.id, "photo"), 1); assert.equal(usedDay(), before + 1);
+  assert.equal(JSON.stringify(out).includes("base64"), false, "写真は応答に含めない");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM recipe_photos").get().n, 0, "写真は保存しない");
+  t.ok("写真の推定: AI(偽物)1回、栄養は成分表からコードで計算、見つからない食材は印を付ける。写真は保存しない");
+
+  f = fakeDeps({ vision: () => ({ status: 500, body: "" }) });
+  out = await H.photoEstimateHandler(env, alice, { image: img }, f.deps);
+  assert.equal(out.status, 502); assert.equal(f.calls.vision, 1); assert.equal(usedMonth(alice.id, "photo"), 1); assert.equal(usedDay(), before + 1);
+  f = fakeDeps({ vision: () => ({ content: JSON.stringify({ dishes: [] }) }) });
+  out = await H.photoEstimateHandler(env, alice, { image: img }, f.deps);
+  assert.equal(out.status, 422); assert.equal(usedMonth(alice.id, "photo"), 1);
+  f = fakeDeps({ vision: () => ({ content: "料理ではありません" }) });
+  out = await H.photoEstimateHandler(env, alice, { image: img }, f.deps);
+  assert.equal(out.status, 422); assert.equal(usedMonth(alice.id, "photo"), 1);
+  t.ok("AIの失敗・料理が写っていない・壊れた返答は、回数を戻してやさしい案内を返す");
+
+  sqlite.prepare("UPDATE ai_usage_user SET used = 40 WHERE user_id=? AND kind='photo'").run(alice.id);
+  f = fakeDeps();
+  out = await H.photoEstimateHandler(env, alice, { image: img }, f.deps);
+  assert.equal(out.status, 429); assert.equal(f.calls.vision, 0); assert.match(out.body.error, /上限/);
+  t.ok("月40回の上限に達したら、AIを呼ばずに断る");
+
+  // 本番の経路(APIキーなし): 通信せず失敗し、回数も戻る
+  sqlite.prepare("UPDATE ai_usage_user SET used = 0 WHERE user_id=?").run(alice.id);
+  const dayBefore = usedDay();
+  let r = await call(photoApi.onRequestPost, alice, { method: "POST", body: { image: img } });
+  assert.equal(r.status, 502); assert.equal(usedMonth(alice.id, "photo"), 0); assert.equal(usedDay(), dayBefore);
+  r = await call(photoApi.onRequestPost, null, { method: "POST", body: { image: img } }); assert.equal(r.status, 401);
+  r = await call(photoApi.onRequestPost, alice, { method: "POST", body: { image: img }, headers: { Origin: "https://evil.example" } }); assert.equal(r.status, 403);
+  r = await call(photoApi.onRequestPost, alice, { method: "POST", rawBody: "{x" }); assert.equal(r.status, 400);
+  assert.deepEqual(guard.calls, []);
+  t.ok("本番の経路: APIキーなしでは外部通信せず失敗し回数も戻る。未ログイン401・別サイト403・壊れたJSON400");
+
+  // 写真の推定を、確認後に記録できる(source=photo・おおよそ)
+  const mealsApi = await import("../functions/api/meals.js");
+  r = await call(mealsApi.onRequestPost, alice, { method: "POST", body: { day: today, slot: "lunch", name: "牛丼", via: "photo", ingredients: [{ name: "ブロッコリー", grams: 50 }] } });
+  assert.equal(r.status, 200); assert.equal(r.data.approx, true);
+  assert.equal(sqlite.prepare("SELECT source FROM meal_logs WHERE id=?").get(r.data.id).source, "photo");
+  t.ok("写真の推定は、ユーザーが確認・修正したあとに「おおよそ」として記録される");
+}
+
+assert.deepEqual(guard.calls, [], "外部通信は1件も試みられていない");
+guard.restore();
+t.done();

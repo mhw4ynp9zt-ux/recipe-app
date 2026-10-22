@@ -22,6 +22,7 @@
 <!-- 保存済みタブ(タイル表示・絞り込みシート・詳細シート)。テーマの色を使います -->
 <link rel="stylesheet" href="css/saved.css">
 <link rel="stylesheet" href="css/share-import.css">
+<link rel="stylesheet" href="css/kondate.css">
 </head>
 <body>
 <div class="app">
@@ -39,6 +40,14 @@
     <button type="button" class="view-tab active" id="tab-create" role="tab" aria-selected="true" aria-controls="view-create">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 11.5h17a8.5 8.5 0 0 1-17 0Z"/><path d="M9 7.5c0-1.5 1-1.8 1-3.3M14 7.5c0-1.5 1-1.8 1-3.3"/></svg>
       <span>作る</span>
+    </button>
+    <button type="button" class="view-tab" id="tab-today" role="tab" aria-selected="false" aria-controls="view-today">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+      <span>今日</span>
+    </button>
+    <button type="button" class="view-tab" id="tab-week" role="tab" aria-selected="false" aria-controls="view-week">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5.5" width="16" height="14" rx="2.5"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></svg>
+      <span>週</span>
     </button>
     <button type="button" class="view-tab" id="tab-saved" role="tab" aria-selected="false" aria-controls="view-saved">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3.5h11v17l-5.5-4-5.5 4Z"/></svg>
@@ -140,6 +149,12 @@
     <p class="note" id="create-note" hidden>※栄養量は目安です。体調や好みに合わせて調整してください。</p>
   </main>
 
+  <!-- ===== 今日 ===== -->
+  <main id="view-today" role="tabpanel" aria-labelledby="tab-today" hidden></main>
+
+  <!-- ===== 週(週プラン・買い物) ===== -->
+  <main id="view-week" role="tabpanel" aria-labelledby="tab-week" hidden></main>
+
   <!-- ===== 保存済み ===== -->
   <main id="view-saved" role="tabpanel" aria-labelledby="tab-saved" hidden>
     <div class="saved-head">
@@ -165,6 +180,9 @@
       <p class="input-hint">パスキーでログインすると、AIでのレシピ作成が使えるようになり、保存したレシピを他の端末からも見られます。</p>
       <div id="account-box" class="account-box"></div>
     </section>
+
+    <h2 class="view-title" id="panel-targets">目標の目安</h2>
+    <section class="panel"><div id="targets-box"></div></section>
 
     <div id="admin-section" hidden>
       <h2 class="view-title">管理者設定</h2>
@@ -245,12 +263,17 @@
 <script src="js/settings.js"></script>
 <script src="js/manual-text.js"></script>
 <script src="js/appliances.js"></script>
+<script src="js/kondate-core.js"></script>
 <script src="js/tabs.js"></script>
 <script src="js/multi-field.js"></script>
 <script src="js/create-ai.js"></script>
 <script src="js/recipe-edit-core.js"></script>
 <script src="js/recipe-edit.js"></script>
 <script src="js/recipe-import.js"></script>
+<script src="js/targets.js"></script>
+<script src="js/today.js"></script>
+<script src="js/meal-photo.js"></script>
+<script src="js/week.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>
