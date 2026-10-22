@@ -291,10 +291,12 @@ function setupImportUi(){
   if(typeof document === 'undefined' || document.getElementById('import-sheet')) return;
   const head = document.querySelector('#view-saved .saved-head');
   if(head && !document.getElementById('import-recipe-btn')){
-    const toggle = document.getElementById('saved-search-toggle');
-    const html = '<button type="button" class="saved-import-btn" id="import-recipe-btn" aria-label="レシピを取り込む" title="レシピを取り込む" aria-haspopup="dialog">' +
-      '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></button>';
-    if(toggle) toggle.insertAdjacentHTML('beforebegin', html); else head.insertAdjacentHTML('beforeend', html);
+    // タイトル行の下に、文字つきの赤いボタンを置く(アイコンだけだと「ダウンロード」に見えて分かりづらいため)
+    const html = '<div class="saved-import-row">' +
+      '<button type="button" class="saved-import-btn" id="import-recipe-btn" aria-haspopup="dialog">' +
+      '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-6M9.5 14.5 12 12l2.5 2.5"/></svg>' +
+      '<span>レシピを取り込む</span></button></div>';
+    head.insertAdjacentHTML('afterend', html);
   }
   document.body.insertAdjacentHTML('beforeend',
     '<div id="import-sheet" class="saved-sheet-wrap" hidden>' +
