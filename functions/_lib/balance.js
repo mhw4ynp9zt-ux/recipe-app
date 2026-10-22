@@ -1,10 +1,10 @@
-// 「今日のバランス」と「週の振り返り」。AIは呼ばない。計算はすべてコード(保存済みの栄養値の足し算と比較)。
+// 栄養の目安との比較(gaugeOf)と「週の振り返り」。AIは呼ばない。計算はすべてコード(保存済みの栄養値の足し算と比較)。
+// (「今日のバランス」「次の食事のおすすめ」は、週プランと週の振り返りがあるため、画面から外した)
 // 文言は kondate-messages.js にまとめてある。数字の差(あと◯g)は、責める見え方になるので返さない(ゲージの位置だけ返す)。
 
 import * as M from "./kondate-messages.js";
 import { addDays } from "./meals.js";
 
-const GAUGE_METRICS = ["calories", "protein", "veg", "fat", "salt", "fiber", "carbs", "carbohydrate"];
 const AIM_BAND = 0.1; // 範囲のない「目安」は ±10% を「ちょうど良い」とする
 const round1 = (v) => Math.round(v * 10) / 10;
 
@@ -28,43 +28,6 @@ export function gaugeOf(id, total, target) {
     fill: Math.min(1, total / scaleMax), mark: Math.min(1, v / scaleMax),
     text: M.STATUS_TEXT[status],
   };
-}
-
-export function buildBalance(totals, effective, { hasMeals, approx, showNumbers = true }) {
-  const gauges = GAUGE_METRICS.filter((id) => effective[id]).map((id) => gaugeOf(id, totals[id] || 0, effective[id]));
-  return { hasMeals, approx, approxText: approx ? M.APPROX_TEXT : null, showNumbers, gauges, help: M.GAUGE_HELP, empty: hasMeals ? null : M.NO_RECORD_TEXT };
-}
-
-// 次の食事のおすすめ。まだ伸ばせる指標を、残りの余裕の範囲で満たせる保存済みレシピを最大3件。
-// 上限のある指標(カロリー・塩分)を超えるレシピは選ばない。何も当てはまらないときは「今日はここまでで十分です」。
-export function suggestNext(gauges, recipes, { limit = 3 } = {}) {
-  const need = gauges.filter((g) => g.status === "below" && ["protein", "fiber", "veg"].includes(g.id));
-  const room = {};
-  for (const g of gauges) {
-    if (!g.target) continue;
-    if (g.id === "calories" && g.target.hi != null) room.calories = g.target.hi - g.total;
-    if (g.id === "salt" && g.target.hi != null) room.salt = g.target.hi - g.total;
-  }
-  const scored = [];
-  for (const r of recipes) {
-    const n = r.nutrition && typeof r.nutrition === "object" ? r.nutrition : r;
-    if (typeof n.calories !== "number") continue;
-    if (room.calories !== undefined && n.calories > room.calories) continue;
-    if (room.salt !== undefined && typeof n.salt === "number" && n.salt > room.salt) continue;
-    let score = 0;
-    const helps = [];
-    for (const g of need) {
-      const have = n[g.id];
-      if (typeof have !== "number" || have <= 0) continue;
-      const remaining = Math.max(0.0001, g.target.lo - g.total);
-      const part = Math.min(have, remaining) / remaining;
-      if (part >= 0.2) { score += part; helps.push(g.id); }
-    }
-    if (score > 0) scored.push({ recipeId: r.id, name: r.name, helps, score: round1(score), calories: n.calories });
-  }
-  scored.sort((a, b) => b.score - a.score || a.calories - b.calories);
-  const picks = scored.slice(0, limit);
-  return { title: M.nextMealTitle(picks.length > 0), picks };
 }
 
 // ==== 週の振り返り ====
