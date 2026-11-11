@@ -1,10 +1,11 @@
-// 今日のバランス・次の食事のおすすめ・週の振り返りのテスト。AI(有料)も外部サイトも呼びません。
+// 栄養の状態の判定(gaugeOf)・週の振り返り・今日の食事APIのテスト。AI(有料)も外部サイトも呼びません。
+// (「今日のバランス」「次の食事のおすすめ」は画面とAPIから外したため、そのテストはありません。外したことも下で確かめます)
 import assert from "node:assert/strict";
-import { createEnv, loginAs, callJson, installFetchGuard, makeRunner, saveRecipe } from "./_support.mjs";
+import { createEnv, loginAs, callJson, installFetchGuard, makeRunner } from "./_support.mjs";
 import { AVOID_WORDS } from "../functions/_lib/kondate-messages.js";
 
 const guard = installFetchGuard();
-const t = makeRunner("今日のバランス・振り返り");
+const t = makeRunner("栄養の状態判定・振り返り・今日の食事API");
 const B = await import("../functions/_lib/balance.js");
 const meals = await import("../functions/_lib/meals.js");
 const today = await import("../functions/api/today.js");
@@ -38,26 +39,10 @@ const tg = await import("../functions/api/user/targets.js");
   t.ok("ゲージの状態(以上/未満/範囲/目安±10%)の境目。塩分は少なくても責めない。差の数字は返さない");
 }
 
-// ---- 次の食事 ----
+// ---- 外したもの ----
 {
-  const gauges = [
-    B.gaugeOf("calories", 1200, { value: 2000, kind: "aim", unit: "kcal" }),
-    B.gaugeOf("protein", 30, { value: 65, kind: "min", unit: "g" }),
-    B.gaugeOf("fiber", 8, { value: 20, kind: "min", unit: "g" }),
-    B.gaugeOf("salt", 5, { value: 7.5, kind: "max", unit: "g" }),
-  ];
-  const recipes = [
-    { id: "a", name: "豆と魚の煮物", nutrition: { calories: 450, protein: 28, fiber: 9, salt: 2 } },
-    { id: "b", name: "しょっぱい丼", nutrition: { calories: 500, protein: 35, fiber: 10, salt: 6 } },
-    { id: "c", name: "こってり", nutrition: { calories: 1500, protein: 50, fiber: 15, salt: 2 } },
-    { id: "d", name: "ゼリー", nutrition: { calories: 80, protein: 0, fiber: 0, salt: 0 } },
-  ];
-  const n = B.suggestNext(gauges, recipes);
-  assert.deepEqual(n.picks.map((p) => p.recipeId), ["a"], "塩分・カロリーの余裕を超えるレシピと、役に立たないレシピは選ばない");
-  assert.ok(n.picks[0].helps.includes("protein") && n.picks[0].helps.includes("fiber"));
-  const done = B.suggestNext([B.gaugeOf("protein", 80, { value: 65, kind: "min" }), B.gaugeOf("fiber", 25, { value: 20, kind: "min" })], recipes);
-  assert.equal(done.picks.length, 0); assert.match(done.title, /ここまでで十分/);
-  t.ok("次の食事のおすすめ: 余裕の範囲で足せるものだけ。全部ちょうど良ければ「今日はここまでで十分です」");
+  assert.equal(B.buildBalance, undefined); assert.equal(B.suggestNext, undefined);
+  t.ok("「今日のバランス」(buildBalance)と「次の食事のおすすめ」(suggestNext)は、もう無い");
 }
 
 // ---- 週の振り返り ----
@@ -101,18 +86,16 @@ const tg = await import("../functions/api/user/targets.js");
   t.ok("未ログインは401、不正な日付は400");
 
   r = await callJson(today.onRequestGet, env, { cookie: a.cookie });
-  assert.equal(r.status, 200); assert.equal(r.data.balance.hasMeals, false); assert.match(r.data.balance.empty, /まだ記録がありません/); assert.equal(r.data.next, null);
-  t.ok("記録も目標もないときは、責めずに案内だけ返す");
+  assert.equal(r.status, 200); assert.deepEqual(r.data.meals, []); assert.equal(r.data.showNumbers, true);
+  assert.equal("balance" in r.data, false); assert.equal("next" in r.data, false); assert.equal("hasTargets" in r.data, false);
+  t.ok("記録がないときは、空の一覧を返す(バランス・次の食事のおすすめは返さない)");
 
-  await callJson(tg.onRequestPut, env, { method: "PUT", cookie: a.cookie, body: { profile: { sex: "female", age: 30, activity: "normal" } } });
-  saveRecipe(sqlite, a.id, { id: "r1", name: "豆と魚", nutrition: { calories: 400, protein: 25, fiber: 9, salt: 2 } });
+  await callJson(tg.onRequestPut, env, { method: "PUT", cookie: a.cookie, body: { profile: { sex: "female", age: 30, activity: "normal" }, showNumbers: false } });
   sqlite.prepare("INSERT INTO meal_logs (id,user_id,day,slot,name,nutrition,approx,source,created_at) VALUES ('m1',?,?,?,?,?,0,'quick',1)").run(a.id, day, "breakfast", "トースト", JSON.stringify({ calories: 300, protein: 10, fiber: 2, salt: 1.5 }));
   r = await callJson(today.onRequestGet, env, { cookie: a.cookie });
-  assert.equal(r.data.balance.hasMeals, true); assert.equal(r.data.hasTargets, true);
-  const prot = r.data.balance.gauges.find((g) => g.id === "protein");
-  assert.equal(prot.status, "below"); assert.equal(prot.text, "まだ伸ばせます");
-  assert.ok(r.data.next.picks.some((p) => p.recipeId === "r1"));
-  t.ok("目標と記録があれば、ゲージと次の食事のおすすめ(保存済みレシピ)が返る");
+  assert.equal(r.data.meals.length, 1); assert.equal(r.data.meals[0].name, "トースト"); assert.equal(r.data.showNumbers, false);
+  assert.equal(r.data.quota.photo.cap, 40);
+  t.ok("記録した食事が返り、「数字を隠す」設定と写真の残り回数も返る");
 
   r = await callJson(review.onRequestGet, env, { cookie: a.cookie });
   assert.equal(r.status, 200); assert.ok(r.data.title);

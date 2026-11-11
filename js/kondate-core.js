@@ -34,16 +34,21 @@
   K.SLOTS = [['breakfast', '朝'], ['lunch', '昼'], ['dinner', '夜'], ['snack', '間食']];
   K.fmt = (v) => (Math.round(Number(v) * 10) / 10).toLocaleString('ja-JP');
 
-  // ゲージ。数字を隠す設定のときは、バーと言葉だけにする。「あと◯g」のような差の数字は出さない。
-  K.gaugeHtml = function(g, showNumbers){
-    const id = g.id;
-    const num = showNumbers && g.target
-      ? '<span class="k-gauge-num">' + K.fmt(g.total) + ' / 目安 ' + K.fmt(g.target.value) + K.unit(id) + (g.target.kind === 'min' ? ' 以上' : g.target.kind === 'max' ? ' 未満' : '') + '</span>'
+  // 週ページの「その日のバランス」の1行。濃い色=食べた分、薄い色=予定の分、縦の線=1日の目安。
+  // 食べた記録がある日は「食べた」の状態の言葉、まだ無い日は「予定」の状態の言葉を出す。数字を隠す設定のときは、バーと言葉だけ。「あと◯g」のような差の数字は出さない。
+  K.dayGaugeHtml = function(g, showNumbers, hasEaten){
+    const id = g.id, e = g.eaten, p = g.planned;
+    const main = hasEaten ? e : p;
+    const label = K.LABEL[id] || id;
+    const text = (main.text || '') + (hasEaten ? '' : '(予定)');
+    const num = showNumbers && main.target
+      ? '<span class="k-gauge-num">' + (hasEaten ? '食べた ' + K.fmt(e.total) + ' ・ ' : '') + '予定 ' + K.fmt(p.total) + ' ・ 目安 ' + K.fmt(main.target.value) + K.unit(id) + (main.target.kind === 'min' ? ' 以上' : main.target.kind === 'max' ? ' 未満' : '') + '</span>'
       : '';
-    return '<div class="k-gauge k-' + K.esc(g.status) + '" data-metric="' + K.esc(id) + '">' +
-      '<div class="k-gauge-head"><span class="k-gauge-label">' + K.esc(K.LABEL[id] || id) + '</span><span class="k-gauge-text">' + K.esc(g.text || '') + '</span></div>' +
-      '<div class="k-bar" role="img" aria-label="' + K.esc((K.LABEL[id] || id) + ' ' + (g.text || '')) + '"><div class="k-bar-fill" style="width:' + Math.round((g.fill || 0) * 100) + '%"></div>' +
-      '<div class="k-bar-mark" style="left:' + Math.round((g.mark || 0) * 100) + '%"></div></div>' + num + '</div>';
+    return '<div class="k-gauge k-' + K.esc(main.status) + '" data-metric="' + K.esc(id) + '">' +
+      '<div class="k-gauge-head"><span class="k-gauge-label">' + K.esc(label) + '</span><span class="k-gauge-text">' + K.esc(text) + '</span></div>' +
+      '<div class="k-bar" role="img" aria-label="' + K.esc(label + ' ' + text) + '"><div class="k-bar-plan" style="width:' + Math.round((p.fill || 0) * 100) + '%"></div>' +
+      '<div class="k-bar-fill" style="width:' + Math.round((e.fill || 0) * 100) + '%"></div>' +
+      '<div class="k-bar-mark" style="left:' + Math.round((main.mark || 0) * 100) + '%"></div></div>' + num + '</div>';
   };
 
   // AIを使う前の確認。今月の残り回数を見せて、「使う」をタップしたときだけ true を返す(閉じる・やめるは false)。

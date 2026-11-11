@@ -1,4 +1,5 @@
-// 「今日のバランス」と「週の振り返り」。AIは呼ばない。計算はすべてコード(保存済みの栄養値の足し算と比較)。
+// 栄養の目安との比較(gaugeOf)と「週の振り返り」。AIは呼ばない。計算はすべてコード(保存済みの栄養値の足し算と比較)。
+// (「今日のバランス」「次の食事のおすすめ」は、週プランと週の振り返りがあるため、画面から外した)
 // 文言は kondate-messages.js にまとめてある。数字の差(あと◯g)は、責める見え方になるので返さない(ゲージの位置だけ返す)。
 
 import * as M from "./kondate-messages.js";
@@ -30,41 +31,29 @@ export function gaugeOf(id, total, target) {
   };
 }
 
-export function buildBalance(totals, effective, { hasMeals, approx, showNumbers = true }) {
-  const gauges = GAUGE_METRICS.filter((id) => effective[id]).map((id) => gaugeOf(id, totals[id] || 0, effective[id]));
-  return { hasMeals, approx, approxText: approx ? M.APPROX_TEXT : null, showNumbers, gauges, help: M.GAUGE_HELP, empty: hasMeals ? null : M.NO_RECORD_TEXT };
-}
-
-// 次の食事のおすすめ。まだ伸ばせる指標を、残りの余裕の範囲で満たせる保存済みレシピを最大3件。
-// 上限のある指標(カロリー・塩分)を超えるレシピは選ばない。何も当てはまらないときは「今日はここまでで十分です」。
-export function suggestNext(gauges, recipes, { limit = 3 } = {}) {
-  const need = gauges.filter((g) => g.status === "below" && ["protein", "fiber", "veg"].includes(g.id));
-  const room = {};
-  for (const g of gauges) {
-    if (!g.target) continue;
-    if (g.id === "calories" && g.target.hi != null) room.calories = g.target.hi - g.total;
-    if (g.id === "salt" && g.target.hi != null) room.salt = g.target.hi - g.total;
+// ==== 週ページの「その日のバランス」 ====
+// 予定(プランの料理の合計)と食べた(食べた記録の合計)を、日ごとに返す。目標が無いときは gauges を空にする。計算はすべてコード。
+// planDays: プランの days / meals: その週の食べた記録 / effective: 目標(loadEffectiveTargets)
+const sumOf = (list) => { const t = {}; for (const n of list) for (const [k, v] of Object.entries(n || {})) t[k] = (t[k] || 0) + v; for (const k of Object.keys(t)) t[k] = round1(t[k]); return t; };
+export function buildDayBalances(weekStart, planDays, meals, effective, { showNumbers = true } = {}) {
+  const ids = GAUGE_METRICS.filter((id) => effective && effective[id]);
+  const days = {};
+  for (let i = 0; i < 7; i++) {
+    const date = addDays(weekStart, i);
+    const planned = (planDays || []).filter((d) => d.date === date && d.kind === "cook" && d.recipe);
+    const eaten = (meals || []).filter((m) => m.day === date);
+    const plannedTotals = sumOf(planned.map((d) => d.recipe.nutrition));
+    const eatenTotals = sumOf(eaten.map((m) => m.nutrition));
+    const approx = eaten.some((m) => m.approx) || planned.some((d) => d.recipe.nutritionCheck && ((d.recipe.nutritionCheck.unmatched || []).length || (d.recipe.nutritionCheck.missing || []).length));
+    days[date] = {
+      plannedCount: planned.length, eatenCount: eaten.length,
+      eatenMeals: eaten.map((m) => ({ slot: m.slot, name: m.name })),
+      approxText: approx ? M.DAY_APPROX : null,
+      gauges: (planned.length || eaten.length) ? ids.map((id) => ({ id, planned: gaugeOf(id, plannedTotals[id] || 0, effective[id]), eaten: gaugeOf(id, eatenTotals[id] || 0, effective[id]) })) : [],
+      empty: (planned.length || eaten.length) ? null : M.DAY_EMPTY,
+    };
   }
-  const scored = [];
-  for (const r of recipes) {
-    const n = r.nutrition && typeof r.nutrition === "object" ? r.nutrition : r;
-    if (typeof n.calories !== "number") continue;
-    if (room.calories !== undefined && n.calories > room.calories) continue;
-    if (room.salt !== undefined && typeof n.salt === "number" && n.salt > room.salt) continue;
-    let score = 0;
-    const helps = [];
-    for (const g of need) {
-      const have = n[g.id];
-      if (typeof have !== "number" || have <= 0) continue;
-      const remaining = Math.max(0.0001, g.target.lo - g.total);
-      const part = Math.min(have, remaining) / remaining;
-      if (part >= 0.2) { score += part; helps.push(g.id); }
-    }
-    if (score > 0) scored.push({ recipeId: r.id, name: r.name, helps, score: round1(score), calories: n.calories });
-  }
-  scored.sort((a, b) => b.score - a.score || a.calories - b.calories);
-  const picks = scored.slice(0, limit);
-  return { title: M.nextMealTitle(picks.length > 0), picks };
+  return { weekStart, showNumbers, hasTargets: ids.length > 0, help: M.DAY_HELP, days };
 }
 
 // ==== 週の振り返り ====

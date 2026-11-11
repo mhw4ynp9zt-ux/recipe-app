@@ -4,6 +4,7 @@
 // 3) AIを呼ぶ箇所(callAi / callVision)は、それぞれ1か所だけ
 // 4) 2つのAPIは POST だけで、ログインとOrigin確認を必ず通る
 // 5) 画面側は x.ai を呼ばず、AIにつながるAPIは「実行ボタン」の2つだけ
+// 6) 朝食・昼食・夕食: 1回の実行で頼むのは1つの食事だけ。画面は確認のあと、食事ごとに1回ずつ(最大3回)・残り回数まで・失敗したら止める
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -96,5 +97,27 @@ CLIENT.forEach((f) => {
   assert.ok(/data-ai-confirm|confirmAi\(/.test(src), rel(f) + ": AIを使う前の確認(回数の表示)がありません");
 });
 t.ok("AIを使う画面には、実行前の確認(今月の残り回数の表示)がある");
+
+// 6) 朝食・昼食・夕食
+const plan = read(abs("functions/_lib/week-plan.js"));
+const runBody = plan.slice(plan.indexOf("export async function runPlan"));
+assert.ok(!/\b(while)\s*\(/.test(runBody.replace(/\/\/.*$/gm, "")), "実行の中に、繰り返し(while)がない");
+assert.ok(!/for\s*\([^)]*\)[^;{]*\{[^}]*deps\.callAi\(/.test(runBody), "AIを呼ぶ箇所が、繰り返しの中にない");
+assert.equal((runBody.match(/deps\.callAi\(/g) || []).length, 1);
+assert.ok(/MAX_FILL_PER_RUN\s*=\s*7/.test(plan), "1回に頼む日数は7日まで(=1つの食事の1週間ぶん)");
+t.ok("サーバーの実行は、1回で1つの食事(最大7日ぶん)だけをAI1回で頼む。繰り返しの中でAIを呼ばない");
+const week = read(abs("js/week.js"));
+const runCalls = week.match(/\/run'/g) || [];
+assert.equal(runCalls.length, 1, "画面から実行APIを呼ぶ箇所は1か所");
+const iConfirm = week.indexOf("await K.confirmAi("), iRun = week.indexOf("/run'");
+assert.ok(iConfirm > 0 && iRun > iConfirm, "実行APIは、確認(confirmAi)のあとにだけ呼ぶ");
+assert.ok(/MAX_AI_RUNS\s*=\s*3/.test(week), "1回の「考える」でAIを呼ぶのは最大3回(食事の数)");
+assert.ok(/Math\.min\(MAX_AI_RUNS,\s*Math\.max\(0,\s*remaining\)\)/.test(week), "今月の残り回数より多くは呼ばない");
+const loop = week.slice(week.indexOf("for(let i = 0; i < runnable.length"), week.indexOf("return good;"));
+assert.ok(/break;/.test(loop), "うまくいかなかったら、そこで止める");
+assert.ok(!/\bwhile\s*\(/.test(week) && !/setInterval|setTimeout\([^)]*run/.test(week), "自動で繰り返し呼ぶ仕組みがない(タイマー・while)");
+const runApi = read(abs("functions/api/week/plan/[id]/run.js"));
+assert.ok(/slot/.test(runApi) && !/\bfor\s*\(|\bwhile\s*\(/.test(runApi.replace(/\/\/.*$/gm, "")), "実行APIは、1つの食事だけを渡し、繰り返しがない");
+t.ok("画面は、確認のあとにだけ、食事ごとに1回ずつ(最大3回)・今月の残り回数まで呼び、失敗したらそこで止まる(自動の繰り返しなし)");
 
 t.done();

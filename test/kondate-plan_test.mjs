@@ -23,6 +23,7 @@ const planIdApi = await import("../functions/api/week/plan/[id].js");
 const pantryApi = await import("../functions/api/user/pantry.js");
 const runApi = await import("../functions/api/week/plan/[id]/run.js");
 const photoApi = await import("../functions/api/meals/photo.js");
+const tg = await import("../functions/api/user/targets.js");
 
 const { env, sqlite } = createEnv({ extraSql: [read("db/migration-003-foods.sql"), read("db/seed-foods.sql"),
   // このリポジトリの写しには入っていない過去のマイグレーションの、テスト用の簡易版(本番のDBとは無関係)
@@ -66,7 +67,7 @@ const call = (h, user, opts = {}) => callJson(h, env, { cookie: user && user.coo
   const all = Array.from({ length: 7 }, (_, i) => meals.addDays(monday, i));
   assert.match(W.parsePlanRequest({ offDays: all }).error, /1日も/);
   const ok = W.parsePlanRequest({ outingDays: [meals.addDays(monday, 6)] });
-  assert.equal(ok.value.kinds[meals.addDays(monday, 6)], "outing");
+  assert.equal(ok.value.kinds[W.slotKey(meals.addDays(monday, 6), "dinner")], "outing"); assert.deepEqual(ok.value.slots, ["dinner"]);
   t.ok("週プランの入力の検証(月曜のみ・過去/再来週は不可・日付は同じ週のみ・作る日が必要)");
 }
 
@@ -131,7 +132,7 @@ const N = [0, 1, 2, 3, 4, 6].map((i) => meals.addDays(monday, i)).filter((d) => 
   assert.equal(r.status, 200); assert.equal(r.data.days.find((d) => d.date === target).kind, "outing");
   assert.ok(!r.data.pending.includes(target));
   r = await call(planIdApi.onRequestPatch, alice, { method: "PATCH", params: { id: planId }, body: { action: "cook", date: target } });
-  assert.deepEqual(r.data.pending, [target]);
+  assert.deepEqual(r.data.pending, [W.slotKey(target, "dinner")]);
   t.ok("外食にした日はAIの対象から外れる。「作る」に戻した日だけが、作り直しの対象になる");
 
   const { deps, calls } = fakeDeps();
@@ -224,6 +225,219 @@ const N = [0, 1, 2, 3, 4, 6].map((i) => meals.addDays(monday, i)).filter((d) => 
   assert.equal(out.status, 200); assert.equal(out.body.filled, 0); assert.ok(out.body.skipped.length >= 1);
   assert.match(f.calls.lastPrompt, /使わない食材/);
   t.ok("「使わない食材」はAIへの依頼に入れ、それでも入っていた料理は採用しない");
+}
+
+// ---- 朝食・昼食・夕食(1回の実行で頼むのは1つの食事だけ。AIは偽物) ----
+{
+  const nextMon = meals.addDays(monday, 7);
+  const key = (d, sl) => W.slotKey(d, sl);
+  const ALL = ["breakfast", "lunch", "dinner"];
+  // 入力の検証
+  assert.match(W.parsePlanRequest({ slots: [] }).error, /食事/);
+  assert.match(W.parsePlanRequest({ slots: ["snack"] }).error, /食事/);
+  assert.match(W.parsePlanRequest({ slots: "dinner" }).error, /食事/);
+  assert.deepEqual(W.parsePlanRequest({ weekStart: nextMon, slots: ["dinner", "breakfast", "breakfast"] }).value.slots, ["breakfast", "dinner"]);
+  assert.match(W.parsePlanRequest({ weekStart: nextMon, slots: ["lunch"], outingMeals: [key(nextMon, "dinner")] }).error, /含まれない/);
+  assert.match(W.parsePlanRequest({ weekStart: nextMon, outingMeals: "x" }).error, /食事/);
+  assert.match(W.parsePlanRequest({ weekStart: nextMon, outingMeals: ["__proto__"] }).error, /含まれない/);
+  const pr = W.parsePlanRequest({ weekStart: nextMon, slots: ALL, outingDays: [nextMon], offMeals: [key(meals.addDays(nextMon, 1), "breakfast")] }).value;
+  assert.equal(Object.keys(pr.kinds).length, 21);
+  assert.deepEqual(ALL.map((sl) => pr.kinds[key(nextMon, sl)]), ["outing", "outing", "outing"], "outingDays は、選んだ食事すべてに効く");
+  assert.equal(pr.kinds[key(meals.addDays(nextMon, 1), "breakfast")], "off");
+  t.ok("食事の指定の検証(空・未知の食事・範囲外の日付/食事は不可)。日付指定は全食事、食事指定はその食事だけに効く");
+
+  assert.equal(W.targetsToText({ protein: { value: 100, kind: "min", unit: "g" } }, "breakfast"), "・たんぱく質: 朝食1回で 25g以上");
+  assert.equal(W.targetsToText({ protein: { value: 100, kind: "min", unit: "g" } }, "lunch"), "・たんぱく質: 昼食1回で 30g以上");
+  assert.equal(W.targetsToText({ protein: { value: 100, kind: "min", unit: "g" } }), "・たんぱく質: 夕食1回で 35g以上");
+  t.ok("1食あたりの目安は、朝食25%・昼食30%・夕食35%(夕食は従来どおり)");
+
+  // 3食ぶんの枠(昼食1つは外食)
+  const p = W.parsePlanRequest({ weekStart: nextMon, slots: ALL, outingMeals: [key(nextMon, "lunch")] }).value;
+  const made = await W.createPlan(env, alice.id, p, Date.now());
+  const usedBefore = usedMonth(alice.id); const dayBefore = usedDay();
+  assert.equal(usedMonth(alice.id), usedBefore); assert.equal(usedDay(), dayBefore);
+  let r = await call(weekApi.onRequestGet, alice, { url: "https://recipe.test/api/week?week=" + nextMon });
+  assert.equal(r.data.plan.days.length, 21); assert.equal(r.data.plan.pending.length, 20);
+  assert.deepEqual(r.data.plan.days.slice(0, 3).map((d) => d.slot), ALL, "日付の順、同じ日は 朝→昼→夕");
+  t.ok("3食ぶんの枠は21個(外食を除く20個が対象)。枠づくりはAIも回数も使わない");
+
+  // 偽のAI: 頼まれた食事ごとに、料理名の目印を変える
+  const tagOf = (prompt) => (/朝食/.test(prompt.split("\n")[0]) ? "朝" : /昼食/.test(prompt.split("\n")[0]) ? "昼" : "夕");
+  const mkFake = () => fakeDeps({ deps: { callAi: async function (prompt, n) { this.n = n; fk.calls.ai++; fk.calls.lastPrompt = prompt; fk.calls.prompts.push(prompt); return { content: dishJson(n, tagOf(prompt)) }; } } });
+  let fk = mkFake(); fk.calls.prompts = [];
+
+  // slot を省くと、決まっていない最初の食事(朝食)だけ。AIは1回
+  let out = await H.runPlanHandler(env, alice, made.id, fk.deps);
+  assert.equal(out.status, 200); assert.equal(out.body.slot, "breakfast"); assert.equal(out.body.filled, 7);
+  assert.equal(fk.calls.ai, 1); assert.match(fk.calls.lastPrompt, /朝食/); assert.match(fk.calls.lastPrompt, /ちょうど7個/); assert.doesNotMatch(fk.calls.lastPrompt, /夕食の献立/);
+  assert.deepEqual(out.body.pendingSlots, ["lunch", "dinner"]);
+  assert.equal(usedMonth(alice.id), usedBefore + 1); assert.equal(usedDay(), dayBefore + 1);
+  t.ok("食事を指定せずに実行すると、朝食だけがAI(偽物)1回で埋まり、回数は1回分だけ。残りの食事は自動では頼まない");
+
+  // 不正な食事は、AIを呼ばず、回数も使わない
+  fk = mkFake(); fk.calls.prompts = [];
+  out = await H.runPlanHandler(env, alice, made.id, fk.deps, { slot: "snack" });
+  assert.equal(out.status, 400); assert.equal(fk.calls.ai, 0); assert.equal(usedMonth(alice.id), usedBefore + 1); assert.equal(usedDay(), dayBefore + 1);
+  r = await call(runApi.onRequestPost, alice, { method: "POST", params: { id: made.id }, body: { slot: "snack" } });
+  assert.equal(r.status, 400); assert.equal(usedMonth(alice.id), usedBefore + 1); assert.deepEqual(guard.calls, []);
+  t.ok("不正な食事の指定は400で、AIを呼ばず、回数も使わない(本番の入口も同じ)");
+
+  // 昼食(外食の1つを除く6個)・夕食。前の食事の料理名は「最近つくった料理」として渡す
+  out = await H.runPlanHandler(env, alice, made.id, fk.deps, { slot: "lunch" });
+  assert.equal(out.body.filled, 6); assert.match(fk.calls.lastPrompt, /昼食/); assert.match(fk.calls.lastPrompt, /ちょうど6個/);
+  assert.match(fk.calls.lastPrompt, /最近つくった料理[\s\S]*偽の料理朝1/, "別の食事の料理と重ならないように伝える");
+  out = await H.runPlanHandler(env, alice, made.id, fk.deps, { slot: "dinner" });
+  assert.equal(out.body.filled, 7); assert.match(fk.calls.lastPrompt, /夕食/); assert.deepEqual(out.body.pendingSlots, []);
+  assert.equal(fk.calls.ai, 2); assert.equal(usedMonth(alice.id), usedBefore + 3); assert.equal(usedDay(), dayBefore + 3);
+  t.ok("3食ぶんでAIはちょうど3回(食事ごとに1回)。回数も3回分だけ");
+
+  // 全部決まったら、もう呼ばない
+  const again = mkFake(); again.calls.prompts = [];
+  out = await H.runPlanHandler(env, alice, made.id, again.deps);
+  assert.equal(out.body.filled, 0); assert.equal(again.calls.ai, 0); assert.equal(usedMonth(alice.id), usedBefore + 3);
+  out = await H.runPlanHandler(env, alice, made.id, again.deps, { slot: "breakfast" });
+  assert.equal(out.body.filled, 0); assert.equal(again.calls.ai, 0); assert.equal(usedMonth(alice.id), usedBefore + 3);
+  t.ok("全部決まったあとに何度押しても、AIは呼ばれず、回数も増えない");
+
+  // 週の集計・買い物は、3食ぶんをまとめて扱う
+  r = await call(weekApi.onRequestGet, alice, { url: "https://recipe.test/api/week?week=" + nextMon });
+  assert.equal(r.data.summary.cookedDays, 7); assert.equal(r.data.summary.cookedMeals, 20); assert.equal(r.data.summary.outingMeals, 1); assert.equal(r.data.summary.outingDays, 1);
+  const brocc = r.data.shopping.sections.flatMap((x) => x.items).find((i) => i.name === "ブロッコリー");
+  assert.equal(brocc.amount, 20 * 100 + "g"); assert.equal(brocc.uses.length, 7);
+  t.ok("1週間の集計は日ごと・買い物リストは3食をまとめて合計");
+  const sum = W.weekSummary([
+    { date: "d1", slot: "breakfast", kind: "cook", recipe: { nutrition: { calories: 300 } } }, { date: "d1", slot: "dinner", kind: "cook", recipe: { nutrition: { calories: 500 } } },
+    { date: "d2", slot: "dinner", kind: "cook", recipe: { nutrition: { calories: 700 } } }, { date: "d2", slot: "lunch", kind: "outing", recipe: null }, { date: "d3", slot: "dinner", kind: "cook", recipe: null },
+  ]);
+  assert.deepEqual([sum.cookedDays, sum.cookedMeals, sum.outingDays, sum.outingMeals, sum.pendingMeals, sum.average.calories], [2, 3, 1, 1, 1, 750]);
+  t.ok("週の栄養の平均は、日ごとの合計(その日に決まっている食事ぶん)を平均する");
+
+  // 日ごとの変更は、食事を指定する(省くと夕食)
+  const d3 = meals.addDays(nextMon, 2);
+  r = await call(planIdApi.onRequestPatch, alice, { method: "PATCH", params: { id: made.id }, body: { action: "outing", date: d3, slot: "breakfast" } });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.days.find((d) => d.date === d3 && d.slot === "breakfast").kind, "outing"); assert.equal(r.data.days.find((d) => d.date === d3 && d.slot === "dinner").kind, "cook");
+  r = await call(planIdApi.onRequestPatch, alice, { method: "PATCH", params: { id: made.id }, body: { action: "cook", date: d3, slot: "breakfast" } });
+  assert.deepEqual(r.data.pending, [key(d3, "breakfast")]);
+  r = await call(planIdApi.onRequestPatch, alice, { method: "PATCH", params: { id: made.id }, body: { action: "outing", date: d3, slot: "snack" } });
+  assert.equal(r.status, 400);
+  fk = mkFake(); fk.calls.prompts = [];
+  out = await H.runPlanHandler(env, alice, made.id, fk.deps);
+  assert.equal(out.body.filled, 1); assert.equal(out.body.slot, "breakfast"); assert.match(fk.calls.lastPrompt, /ちょうど1個/); assert.equal(fk.calls.ai, 1);
+  t.ok("外食・作る・作り直しは食事ごと。作り直しは、その食事の決まっていない分だけをAI1回で頼む");
+
+  // 以前のプラン(夕食だけ・slotなし・fillが日付)も、夕食として読める
+  const carol = await loginAs(env, sqlite, "carol");
+  const l1 = meals.addDays(nextMon, 3), l2 = meals.addDays(nextMon, 4);
+  sqlite.prepare("INSERT INTO week_plans (id,user_id,week_start,status,stage,progress,days,request,shopping,ai_calls,lease_until,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,0,0,1,1)")
+    .run("wp-legacy", carol.id, nextMon, "idle", "queued", 0, JSON.stringify([{ date: l1, kind: "cook", recipe: null }, { date: l2, kind: "outing", recipe: null }]), JSON.stringify({ fill: [l1] }), JSON.stringify({ checked: [] }));
+  r = await call(weekApi.onRequestGet, carol, { url: "https://recipe.test/api/week?week=" + nextMon });
+  assert.deepEqual(r.data.plan.days.map((d) => d.slot), ["dinner", "dinner"]); assert.deepEqual(r.data.plan.pending, [key(l1, "dinner")]);
+  fk = mkFake(); fk.calls.prompts = [];
+  out = await H.runPlanHandler(env, carol, "wp-legacy", fk.deps);
+  assert.equal(out.body.filled, 1); assert.equal(out.body.slot, "dinner"); assert.match(fk.calls.lastPrompt, /夕食/); assert.equal(fk.calls.ai, 1);
+  const saved = JSON.parse(sqlite.prepare("SELECT days, request FROM week_plans WHERE id='wp-legacy'").get().days);
+  assert.deepEqual(saved.map((d) => d.slot), ["dinner", "dinner"]);
+  t.ok("以前の(夕食だけの)プランも、そのまま夕食として読めて、実行できる");
+  assert.deepEqual(guard.calls, [], "外部通信は1件も試みられていない");
+}
+
+// ---- 食べた・編集と再計算・その日のバランス(AIは使わない) ----
+{
+  const dave = await loginAs(env, sqlite, "dave");
+  const nm = monday; const day1 = today;   // 今週の「今日」(食べた記録は、今日の前後1日・35日前までしか入れられない)
+  const made = await W.createPlan(env, dave.id, W.parsePlanRequest({ weekStart: nm, slots: ["breakfast", "dinner"] }).value, Date.now());
+  const f = fakeDeps(); await H.runPlanHandler(env, dave, made.id, f.deps, { slot: "breakfast" }); await H.runPlanHandler(env, dave, made.id, f.deps, { slot: "dinner" });
+  const aiBefore = f.calls.ai; const usedBefore = usedMonth(dave.id); const dayBefore = usedDay();
+  const patch = (body) => call(planIdApi.onRequestPatch, dave, { method: "PATCH", params: { id: made.id }, body });
+  const getWeek = () => call(weekApi.onRequestGet, dave, { url: "https://recipe.test/api/week?week=" + nm });
+  const logs = () => sqlite.prepare("SELECT * FROM meal_logs WHERE user_id=? ORDER BY slot").all(dave.id);
+
+  // 食べた: 記録に入る・二重に押しても1件・取り消せる
+  let r = await patch({ action: "eaten", date: day1, slot: "dinner", eaten: true });
+  assert.equal(r.status, 200); assert.equal(r.data.eaten, true);
+  r = await patch({ action: "eaten", date: day1, slot: "dinner", eaten: true });
+  assert.equal(logs().length, 1, "二重に押しても記録は1件");
+  assert.equal(logs()[0].source, "plan"); assert.equal(logs()[0].day, day1); assert.equal(logs()[0].slot, "dinner"); assert.ok(JSON.parse(logs()[0].nutrition).calories > 0);
+  r = await getWeek();
+  assert.equal(r.data.plan.days.find((d) => d.date === day1 && d.slot === "dinner").eaten, true); assert.equal(r.data.plan.days.find((d) => d.date === day1 && d.slot === "breakfast").eaten, false);
+  r = await patch({ action: "eaten", date: day1, slot: "dinner", eaten: false }); assert.equal(r.status, 200); assert.equal(logs().length, 0);
+  r = await patch({ action: "eaten", date: day1, slot: "lunch", eaten: true }); assert.equal(r.status, 400, "その週のプランにない食事は記録できない");
+  r = await patch({ action: "eaten", date: meals.addDays(day1, 30), slot: "dinner", eaten: true }); assert.equal(r.status, 400);
+  r = await patch({ action: "eaten", date: day1, slot: "dinner", eaten: "yes" }); assert.equal(r.status, 400);
+  r = await call(planIdApi.onRequestPatch, bob, { method: "PATCH", params: { id: made.id }, body: { action: "eaten", date: day1, slot: "dinner", eaten: true } }); assert.equal(r.status, 404);
+  t.ok("「食べた」: 記録に入り、二重に押しても1件・取り消せる。決まっていない食事・範囲外・不正な値は400、他人のプランは404");
+
+  // 食べていない食事(まだ決まっていない)は記録できない
+  await patch({ action: "cook", date: day1, slot: "breakfast" });
+  r = await patch({ action: "eaten", date: day1, slot: "breakfast", eaten: true }); assert.equal(r.status, 400); assert.equal(logs().length, 0);
+  t.ok("料理が決まっていない食事は「食べた」にできない");
+
+  // 編集 → 成分表から再計算(プランの中だけ)
+  saveRecipe(sqlite, dave.id, { id: "fav2", name: "お気に入り", type: "煮物", ingredients: ["だいこん 200g"], ingredientDetails: [{ name: "だいこん", amount: "200g", grams: 200 }], steps: ["煮る"], nutrition: { calories: 300, protein: 12 } });
+  await patch({ action: "swap", date: day1, slot: "dinner", recipeId: "fav2" });
+  await patch({ action: "eaten", date: day1, slot: "dinner", eaten: true });
+  const before = (await getWeek()).data.plan.days.find((d) => d.date === day1 && d.slot === "dinner").recipe;
+  const draft = { name: "豚と野菜の炒め(編集)", ingredients: [{ name: "ブロッコリー", grams: 200, food: "ブロッコリー 花序 生" }, { name: "豚ロース", grams: 100, food: "ぶた ロース 脂身つき 生" }], steps: ["切る", "炒める"] };
+  r = await patch({ action: "edit", date: day1, slot: "dinner", draft });
+  assert.equal(r.status, 200);
+  const after = r.data.days.find((d) => d.date === day1 && d.slot === "dinner").recipe;
+  assert.equal(after.name, "豚と野菜の炒め(編集)"); assert.equal(after.source, "edited"); assert.equal(after.edited, true);
+  assert.ok(after.nutrition.calories > 0 && after.nutrition.calories !== before.nutrition.calories, "栄養が再計算されている");
+  assert.equal(after.ingredientDetails.find((i) => i.name === "ブロッコリー").grams, 200);
+  // もう一度、グラムだけ変える → さらに再計算(ブロッコリーが倍になれば、カロリーも増える)
+  const cal1 = after.nutrition.calories;
+  r = await patch({ action: "edit", date: day1, slot: "dinner", draft: { ...draft, ingredients: [{ ...draft.ingredients[0], grams: 400 }, draft.ingredients[1]] } });
+  assert.ok(r.data.days.find((d) => d.date === day1 && d.slot === "dinner").recipe.nutrition.calories > cal1, "編集のたびに再計算される");
+  // 保存済みレシピの本体は変わらない
+  assert.equal(JSON.parse(sqlite.prepare("SELECT data FROM recipes WHERE id='fav2'").get().data).name, "お気に入り");
+  assert.equal(JSON.parse(sqlite.prepare("SELECT data FROM recipes WHERE id='fav2'").get().data).nutrition.calories, 300);
+  // 食べた記録も、編集に合わせて更新される(件数は1件のまま)
+  assert.equal(logs().length, 1); assert.equal(logs()[0].name, "豚と野菜の炒め(編集)");
+  assert.equal(JSON.parse(logs()[0].nutrition).calories, (await getWeek()).data.plan.days.find((d) => d.date === day1 && d.slot === "dinner").recipe.nutrition.calories);
+  t.ok("編集: 成分表から栄養をコードで再計算(編集のたびに)・保存済みレシピは変わらない・食べた記録も更新される");
+
+  // 不正な編集は400(何も変わらない)・決まっていない食事は編集できない
+  const keep = (await getWeek()).data.plan.days.find((d) => d.date === day1 && d.slot === "dinner").recipe.name;
+  r = await patch({ action: "edit", date: day1, slot: "dinner", draft: { ...draft, ingredients: [{ name: "", grams: -1 }] } });
+  assert.equal(r.status, 400); assert.ok(r.data.fields && Object.keys(r.data.fields).length);
+  r = await patch({ action: "edit", date: day1, slot: "dinner", draft: { ...draft, steps: [] } }); assert.equal(r.status, 400);
+  r = await patch({ action: "edit", date: day1, slot: "breakfast", draft }); assert.equal(r.status, 400);
+  assert.equal((await getWeek()).data.plan.days.find((d) => d.date === day1 && d.slot === "dinner").recipe.name, keep);
+  t.ok("入力が不正な編集は400で、何も変わらない。決まっていない食事は編集できない");
+
+  // 差し替え・外食に変えると、食べた記録も追従する
+  await patch({ action: "swap", date: day1, slot: "dinner", recipeId: "fav2" });
+  assert.equal(logs().length, 1); assert.equal(logs()[0].name, "お気に入り"); assert.equal(JSON.parse(logs()[0].nutrition).calories, 300);
+  await patch({ action: "outing", date: day1, slot: "dinner" });
+  assert.equal(logs().length, 0);
+  t.ok("食べた後に、別の料理へ差し替えると記録も更新され、外食にすると記録は取り消される");
+
+  // その日のバランス(予定と食べた)
+  await patch({ action: "swap", date: day1, slot: "dinner", recipeId: "fav2" });
+  await patch({ action: "eaten", date: day1, slot: "dinner", eaten: true });
+  sqlite.prepare("INSERT INTO meal_logs (id,user_id,day,slot,name,nutrition,approx,source,created_at) VALUES ('q1',?,?,?,?,?,1,'quick',1)").run(dave.id, day1, "snack", "おやつ", JSON.stringify({ calories: 100 }));
+  r = await getWeek();
+  assert.equal(r.data.balance.hasTargets, false); assert.equal(r.data.balance.days[day1].gauges.length, 0, "目標がないときは、ゲージは空");
+  await call(tg.onRequestPut, dave, { method: "PUT", body: { profile: { sex: "female", age: 30, activity: "normal" } } });
+  r = await getWeek();
+  const bd = r.data.balance.days[day1]; assert.equal(r.data.balance.hasTargets, true);
+  assert.equal(bd.plannedCount, 1, "予定に数えるのは、料理が決まっている食事だけ(朝食は「作り直し待ち」)"); assert.equal(bd.eatenCount, 2); assert.equal(bd.eatenMeals.length, 2);
+  const cal = bd.gauges.find((g) => g.id === "calories");
+  assert.equal(cal.eaten.total, 400, "食べた = 「食べた」の300 + 記録した間食の100(他の記録も入る)");
+  assert.equal(cal.planned.total, 300, "予定 = プランで料理が決まっている食事の合計");
+  assert.equal(bd.approxText, "おおよその値を含みます");
+  const otherDay = [0, 1, 2, 3, 4, 5, 6].map((i) => meals.addDays(nm, i)).find((d) => d !== day1);
+  await patch({ action: "outing", date: otherDay, slot: "breakfast" }); await patch({ action: "outing", date: otherDay, slot: "dinner" });
+  r = await getWeek();
+  const empty = r.data.balance.days[otherDay]; assert.match(empty.empty, /まだ予定も食べた記録もありません/); assert.deepEqual(empty.gauges, []);
+  const txt = JSON.stringify(r.data.balance); for (const w of ["不足", "足りない", "未達", "失敗", "あと"]) assert.equal(txt.includes(w), false, "避ける言葉: " + w);
+  t.ok("日ごとのバランス: 予定(プラン)と食べた(記録)を別々に返す。記録がない日は案内だけ。責める言葉や「あと◯g」は返さない");
+
+  assert.equal(f.calls.ai, aiBefore, "食べた・編集・差し替え・バランスでAIは呼ばれない");
+  assert.equal(usedMonth(dave.id), usedBefore); assert.equal(usedDay(), dayBefore);
+  assert.deepEqual(guard.calls, []);
+  t.ok("食べた・編集・差し替え・バランスは、AIを呼ばず、利用回数も使わない");
 }
 
 // ---- 買い物リスト ----
